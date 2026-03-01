@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [1.0.3] - Unreleased
 
+### Added
+
+- Display unnamed projects as a compressed directory tree (radix trie) on the home page, in the sidebar project selector, and in "new session" dropdowns
+
 ### Changed
 
 - Hide sessions without any user message from session listings and project session counts (sessions created by launching Claude Code but never sending a message)

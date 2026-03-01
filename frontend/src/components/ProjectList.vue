@@ -4,9 +4,11 @@ import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { formatDate } from '../utils/date'
 import { SESSION_TIME_FORMAT } from '../constants'
+import { buildProjectTree } from '../utils/projectTree'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
+import ProjectTreeNode from './ProjectTreeNode.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
 import CostDisplay from './CostDisplay.vue'
 import AppTooltip from './AppTooltip.vue'
@@ -36,6 +38,16 @@ function timestampToDate(timestamp) {
     return new Date(timestamp * 1000)
 }
 
+// Named projects (have a user-assigned name), sorted by mtime desc (from store)
+const namedProjects = computed(() =>
+    store.getProjects.filter(p => p.name !== null)
+)
+
+// Unnamed projects organized as a directory tree
+const treeRoots = computed(() => {
+    const unnamed = store.getProjects.filter(p => p.name === null)
+    return buildProjectTree(unnamed)
+})
 
 const emit = defineEmits(['select'])
 
@@ -54,65 +66,86 @@ function handleEditClick(event, project) {
     editingProject.value = project
     editDialogRef.value?.open()
 }
+
+function handleTreeEditClick(project) {
+    editingProject.value = project
+    editDialogRef.value?.open()
+}
 </script>
 
 <template>
     <div class="project-list">
-        <wa-card
-            v-for="project in store.getProjects"
-            :key="project.id"
-            class="project-card"
-            appearance="outlined"
-            @click="handleSelect(project)"
-        >
-            <div class="project-info">
-                <div class="project-title-row">
-                    <ProjectBadge :project-id="project.id" class="project-title" />
-                    <ProjectProcessIndicator :project-id="project.id" size="small" />
-                </div>
-                <wa-button
-                    :id="`edit-button-${project.id}`"
-                    variant="neutral"
-                    appearance="plain"
-                    size="small"
-                    class="edit-button"
-                    @click="(e) => handleEditClick(e, project)"
-                >
-                    <wa-icon name="pencil"></wa-icon>
-                </wa-button>
-                <AppTooltip :for="`edit-button-${project.id}`">Edit project (name and color)</AppTooltip>
-                <div v-if="project.directory" class="project-directory">{{ project.directory }}</div>
-                <div class="project-meta-wrapper">
-                    <div class="project-meta">
-                        <span :id="`sessions-count-${project.id}`" class="sessions-count">
-                            <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
-                            <span>{{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}</span>
-                        </span>
-                        <AppTooltip :for="`sessions-count-${project.id}`">Number of sessions</AppTooltip>
-                        <template v-if="showCosts">
-                            <CostDisplay :id="`project-cost-${project.id}`" :cost="project.total_cost" class="project-cost" />
-                            <AppTooltip :for="`project-cost-${project.id}`">Total project cost</AppTooltip>
-                        </template>
-                        <span :id="`project-mtime-${project.id}`" class="project-mtime">
-                            <wa-icon auto-width name="clock" variant="regular"></wa-icon>
-                            <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(project.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
-                            <span v-else>{{ formatDate(project.mtime) }}</span>
-                        </span>
-                        <AppTooltip :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</AppTooltip>
+        <!-- Section 1: Named projects (flat, by mtime) -->
+        <template v-if="namedProjects.length">
+            <div class="section-header">Named projects</div>
+            <wa-card
+                v-for="project in namedProjects"
+                :key="project.id"
+                class="project-card"
+                appearance="outlined"
+                @click="handleSelect(project)"
+            >
+                <div class="project-info">
+                    <div class="project-title-row">
+                        <ProjectBadge :project-id="project.id" class="project-title" />
+                        <ProjectProcessIndicator :project-id="project.id" size="small" />
                     </div>
-                    <div :id="`project-sparkline-${project.id}`" class="project-graph">
-                        <ActivitySparkline :id-suffix="project.id" :data="store.weeklyActivity[project.id] || []" />
+                    <wa-button
+                        :id="`edit-button-${project.id}`"
+                        variant="neutral"
+                        appearance="plain"
+                        size="small"
+                        class="edit-button"
+                        @click="(e) => handleEditClick(e, project)"
+                    >
+                        <wa-icon name="pencil"></wa-icon>
+                    </wa-button>
+                    <AppTooltip :for="`edit-button-${project.id}`">Edit project (name and color)</AppTooltip>
+                    <div v-if="project.directory" class="project-directory">{{ project.directory }}</div>
+                    <div class="project-meta-wrapper">
+                        <div class="project-meta">
+                            <span :id="`sessions-count-${project.id}`" class="sessions-count">
+                                <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
+                                <span>{{ project.sessions_count }} session{{ project.sessions_count !== 1 ? 's' : '' }}</span>
+                            </span>
+                            <AppTooltip :for="`sessions-count-${project.id}`">Number of sessions</AppTooltip>
+                            <template v-if="showCosts">
+                                <CostDisplay :id="`project-cost-${project.id}`" :cost="project.total_cost" class="project-cost" />
+                                <AppTooltip :for="`project-cost-${project.id}`">Total project cost</AppTooltip>
+                            </template>
+                            <span :id="`project-mtime-${project.id}`" class="project-mtime">
+                                <wa-icon auto-width name="clock" variant="regular"></wa-icon>
+                                <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(project.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
+                                <span v-else>{{ formatDate(project.mtime) }}</span>
+                            </span>
+                            <AppTooltip :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</AppTooltip>
+                        </div>
+                        <div :id="`project-sparkline-${project.id}`" class="project-graph">
+                            <ActivitySparkline :id-suffix="project.id" :data="store.weeklyActivity[project.id] || []" />
+                        </div>
+                        <AppTooltip :for="`project-sparkline-${project.id}`">Project activity (message turns per week)</AppTooltip>
                     </div>
-                    <AppTooltip :for="`project-sparkline-${project.id}`">Project activity (message turns per week)</AppTooltip>
                 </div>
-            </div>
-        </wa-card>
-        <div v-if="store.getProjects.length === 0" class="empty-state">
+            </wa-card>
+        </template>
+
+        <!-- Section 2: Unnamed projects (tree) -->
+        <template v-if="treeRoots.length">
+            <div v-if="namedProjects.length" class="section-header">Other projects</div>
+            <ProjectTreeNode
+                v-for="root in treeRoots"
+                :key="root.project ? root.project.id : root.segment"
+                :node="root"
+                @select="handleSelect"
+                @edit="handleTreeEditClick"
+            />
+        </template>
+
+        <div v-if="namedProjects.length === 0 && treeRoots.length === 0" class="empty-state">
             No projects found
         </div>
     </div>
 
-    <!-- Edit dialog (rendered outside the list) -->
     <ProjectEditDialog ref="editDialogRef" :project="editingProject" />
 </template>
 
@@ -187,6 +220,15 @@ function handleEditClick(event, project) {
         gap: var(--wa-space-xs);
     }
 
+}
+
+.section-header {
+    font-size: var(--wa-font-size-s);
+    font-weight: 600;
+    color: var(--wa-color-text-quiet);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: var(--wa-space-xs) 0;
 }
 
 .empty-state {

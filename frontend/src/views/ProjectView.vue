@@ -13,6 +13,7 @@ import ProjectDetailPanel from '../components/ProjectDetailPanel.vue'
 import SessionRenameDialog from '../components/SessionRenameDialog.vue'
 import ProjectEditDialog from '../components/ProjectEditDialog.vue'
 import { getUsageRingColor } from '../utils/usage'
+import { buildProjectTree, flattenProjectTree } from '../utils/projectTree'
 import CostDisplay from '../components/CostDisplay.vue'
 import AppTooltip from '../components/AppTooltip.vue'
 
@@ -160,8 +161,24 @@ const effectiveProjectId = computed(() =>
 
 // All projects for the selector (already sorted by mtime desc in store)
 const allProjects = computed(() => store.getProjects)
+const namedProjects = computed(() =>
+    allProjects.value.filter(p => p.name !== null)
+)
+const flatTree = computed(() => {
+    const unnamed = allProjects.value.filter(p => p.name === null)
+    const roots = buildProjectTree(unnamed)
+    return flattenProjectTree(roots)
+})
 // Non-stale projects only — used in "new session" dropdowns to prevent creating sessions in stale projects
 const nonStaleProjects = computed(() => allProjects.value.filter(p => !p.stale))
+const nonStaleNamedProjects = computed(() =>
+    nonStaleProjects.value.filter(p => p.name !== null)
+)
+const nonStaleFlatTree = computed(() => {
+    const unnamed = nonStaleProjects.value.filter(p => p.name === null)
+    const roots = buildProjectTree(unnamed)
+    return flattenProjectTree(roots)
+})
 // Whether the current project (single-project mode) is stale
 const isCurrentProjectStale = computed(() => {
     if (isAllProjectsMode.value) return false
@@ -644,9 +661,11 @@ function updateSidebarClosedClass(closed) {
                         <wa-option :value="ALL_PROJECTS_ID">
                             All Projects
                         </wa-option>
-                        <wa-divider></wa-divider>
+
+                        <!-- Named projects -->
+                        <wa-divider v-if="namedProjects.length"></wa-divider>
                         <wa-option
-                            v-for="p in allProjects"
+                            v-for="p in namedProjects"
                             :key="p.id"
                             :value="p.id"
                             :label="store.getProjectDisplayName(p.id)"
@@ -656,6 +675,30 @@ function updateSidebarClosedClass(closed) {
                                 <ProjectProcessIndicator :project-id="p.id" size="small" />
                             </span>
                         </wa-option>
+
+                        <!-- Unnamed projects (flattened tree) -->
+                        <wa-divider v-if="flatTree.length"></wa-divider>
+                        <template v-for="item in flatTree" :key="item.key">
+                            <wa-option
+                                v-if="item.isFolder"
+                                disabled
+                                class="tree-folder-option"
+                            >
+                                <span class="tree-folder-label" :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                    {{ item.segment }}
+                                </span>
+                            </wa-option>
+                            <wa-option
+                                v-else
+                                :value="item.project.id"
+                                :label="store.getProjectDisplayName(item.project.id)"
+                            >
+                                <span class="project-option" :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                    <ProjectBadge :project-id="item.project.id" />
+                                    <ProjectProcessIndicator :project-id="item.project.id" size="small" />
+                                </span>
+                            </wa-option>
+                        </template>
                     </wa-select>
                 </div>
 
@@ -777,14 +820,38 @@ function updateSidebarClosedClass(closed) {
                             <wa-icon slot="prefix" name="plus-lg"></wa-icon>
                             New project
                         </wa-dropdown-item>
-                        <wa-divider></wa-divider>
+
+                        <!-- Named projects -->
+                        <wa-divider v-if="nonStaleNamedProjects.length"></wa-divider>
                         <wa-dropdown-item
-                            v-for="p in nonStaleProjects"
+                            v-for="p in nonStaleNamedProjects"
                             :key="p.id"
                             :value="p.id"
                         >
                             <ProjectBadge :project-id="p.id" />
                         </wa-dropdown-item>
+
+                        <!-- Unnamed projects (flattened tree) -->
+                        <wa-divider v-if="nonStaleFlatTree.length"></wa-divider>
+                        <template v-for="item in nonStaleFlatTree" :key="item.key">
+                            <wa-dropdown-item
+                                v-if="item.isFolder"
+                                disabled
+                                class="tree-folder-dropdown-item"
+                            >
+                                <span class="tree-folder-label" :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                    {{ item.segment }}
+                                </span>
+                            </wa-dropdown-item>
+                            <wa-dropdown-item
+                                v-else
+                                :value="item.project.id"
+                            >
+                                <span :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                    <ProjectBadge :project-id="item.project.id" />
+                                </span>
+                            </wa-dropdown-item>
+                        </template>
                     </wa-dropdown>
                 </wa-button-group>
 
@@ -816,14 +883,38 @@ function updateSidebarClosedClass(closed) {
                         <wa-icon slot="prefix" name="plus-lg"></wa-icon>
                         New project
                     </wa-dropdown-item>
-                    <wa-divider></wa-divider>
+
+                    <!-- Named projects -->
+                    <wa-divider v-if="nonStaleNamedProjects.length"></wa-divider>
                     <wa-dropdown-item
-                        v-for="p in nonStaleProjects"
+                        v-for="p in nonStaleNamedProjects"
                         :key="p.id"
                         :value="p.id"
                     >
                         <ProjectBadge :project-id="p.id" />
                     </wa-dropdown-item>
+
+                    <!-- Unnamed projects (flattened tree) -->
+                    <wa-divider v-if="nonStaleFlatTree.length"></wa-divider>
+                    <template v-for="item in nonStaleFlatTree" :key="item.key">
+                        <wa-dropdown-item
+                            v-if="item.isFolder"
+                            disabled
+                            class="tree-folder-dropdown-item"
+                        >
+                            <span class="tree-folder-label" :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                {{ item.segment }}
+                            </span>
+                        </wa-dropdown-item>
+                        <wa-dropdown-item
+                            v-else
+                            :value="item.project.id"
+                        >
+                            <span :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                <ProjectBadge :project-id="item.project.id" />
+                            </span>
+                        </wa-dropdown-item>
+                    </template>
                 </wa-dropdown>
                 <AppTooltip v-if="isAllProjectsMode" for="new-session-all-projects-button">Create a new session</AppTooltip>
             </div>
@@ -1107,6 +1198,19 @@ wa-split-panel::part(divider) {
     gap: var(--wa-space-xs);
     width: 100%;
     justify-content: space-between;
+}
+
+.tree-folder-option {
+}
+
+.tree-folder-dropdown-item {
+    opacity: 1;
+    cursor: default;
+}
+
+.tree-folder-label {
+    font-family: var(--wa-font-mono);
+    font-size: var(--wa-font-size-s);
 }
 
 .sidebar wa-divider {
