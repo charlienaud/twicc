@@ -204,16 +204,11 @@ const didSessionsFailToLoad = computed(() => store.didSessionsFailToLoad(effecti
 // Search/filter state for sessions
 const searchQuery = ref('')
 
-// Show archived sessions filter (persists across project changes)
-const showArchivedSessions = ref(false)
+// Show archived sessions filter (persistent setting, browser-local via settings store)
+const showArchivedSessions = computed(() => settingsStore.isShowArchivedSessions)
 
-// Compact view: local override initialized from the setting.
-// Toggling from the session list menu changes this local state without affecting the setting.
-// When the setting changes (e.g. from the Settings panel), we re-sync to follow the new default.
-const compactView = ref(settingsStore.isCompactSessionList)
-watch(() => settingsStore.isCompactSessionList, (newValue) => {
-    compactView.value = newValue
-})
+// Compact view (persistent setting, browser-local via settings store)
+const compactView = computed(() => settingsStore.isCompactSessionList)
 
 // Reference to SessionList for keyboard navigation
 const sessionListRef = ref(null)
@@ -281,9 +276,9 @@ async function handleRetry() {
 function handleSessionOptionsSelect(event) {
     const item = event.detail.item
     if (item.value === 'show-archived') {
-        showArchivedSessions.value = item.checked
+        settingsStore.setShowArchivedSessions(item.checked)
     } else if (item.value === 'compact-view') {
-        compactView.value = item.checked
+        settingsStore.setCompactSessionList(item.checked)
     }
 }
 

@@ -30,6 +30,7 @@ const SETTINGS_SCHEMA = {
     diffSideBySide: true,
     editorWordWrap: true,
     compactSessionList: false,
+    showArchivedSessions: false,
     defaultPermissionMode: DEFAULT_PERMISSION_MODE,
     alwaysApplyDefaultPermissionMode: false,
     defaultModel: DEFAULT_MODEL,
@@ -67,6 +68,7 @@ const SETTINGS_VALIDATORS = {
     diffSideBySide: (v) => typeof v === 'boolean',
     editorWordWrap: (v) => typeof v === 'boolean',
     compactSessionList: (v) => typeof v === 'boolean',
+    showArchivedSessions: (v) => typeof v === 'boolean',
     defaultPermissionMode: (v) => Object.values(PERMISSION_MODE).includes(v),
     alwaysApplyDefaultPermissionMode: (v) => typeof v === 'boolean',
     defaultModel: (v) => Object.values(MODEL).includes(v),
@@ -155,6 +157,7 @@ export const useSettingsStore = defineStore('settings', {
         isDiffSideBySide: (state) => state.diffSideBySide,
         isEditorWordWrap: (state) => state.editorWordWrap,
         isCompactSessionList: (state) => state.compactSessionList,
+        isShowArchivedSessions: (state) => state.showArchivedSessions,
         getDefaultPermissionMode: (state) => state.defaultPermissionMode,
         isAlwaysApplyDefaultPermissionMode: (state) => state.alwaysApplyDefaultPermissionMode,
         getDefaultModel: (state) => state.defaultModel,
@@ -326,6 +329,18 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set show archived sessions mode.
+         * This setting is not exposed in the settings panel — it is only
+         * toggled from the session list options dropdown in the sidebar.
+         * @param {boolean} enabled
+         */
+        setShowArchivedSessions(enabled) {
+            if (SETTINGS_VALIDATORS.showArchivedSessions(enabled)) {
+                this.showArchivedSessions = enabled
+            }
+        },
+
+        /**
          * Set the default permission mode for new sessions.
          * @param {string} mode - One of PERMISSION_MODE values
          */
@@ -481,6 +496,7 @@ export function initSettings() {
             diffSideBySide: store.diffSideBySide,
             editorWordWrap: store.editorWordWrap,
             compactSessionList: store.compactSessionList,
+            showArchivedSessions: store.showArchivedSessions,
             defaultPermissionMode: store.defaultPermissionMode,
             alwaysApplyDefaultPermissionMode: store.alwaysApplyDefaultPermissionMode,
             defaultModel: store.defaultModel,
