@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Persist "show archived sessions" and "compact view" sidebar toggles in localStorage across page reloads
 - Archive/unarchive projects via ellipsis dropdown menu on project cards, with toggle to show archived projects on home page; archived projects hidden by default from home, selectors, and session lists
 - Display `custom-title` session items (session title changes) with a dedicated component instead of falling through to the generic "Unhandled event" view
+- Improved tool use summaries: richer descriptions for Skill, Task, Grep, and Glob tools
 
 ### Changed
 

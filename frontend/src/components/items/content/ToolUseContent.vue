@@ -277,7 +277,56 @@ const description = computed(() => {
         }
         return filePath
     }
+    // Special tools have their own summary rendering
+    if (isSkill.value || isGrep.value || isGlob.value) return null
     return props.input?.description || null
+})
+
+// --- Skill tool summary ---
+const isSkill = computed(() => props.name === 'Skill')
+const skillDescription = computed(() => {
+    if (!isSkill.value || !props.input?.skill) return null
+    const skill = props.input.skill
+    const colonIdx = skill.indexOf(':')
+    if (colonIdx >= 0) {
+        return {
+            name: capitalize(skill.slice(colonIdx + 1)),
+            namespace: capitalize(skill.slice(0, colonIdx))
+        }
+    }
+    return { name: capitalize(skill), namespace: null }
+})
+
+// --- Grep tool summary ---
+const isGrep = computed(() => props.name === 'Grep')
+const grepParts = computed(() => {
+    if (!isGrep.value) return null
+    const pattern = props.input?.pattern || null
+    // Use "type" if available, otherwise fall back to "glob"
+    const fileType = props.input?.type || props.input?.glob || null
+    const rawPath = props.input?.path || null
+    if (!pattern && !fileType && !rawPath) return null
+
+    let path = null
+    let pathIconSrc = null
+    if (rawPath) {
+        const baseDir = sessionBaseDir.value
+        path = (baseDir && rawPath.startsWith(baseDir + '/'))
+            ? rawPath.slice(baseDir.length + 1)
+            : rawPath
+        const filename = rawPath.split('/').pop() || rawPath
+        const iconId = getFileIconId(filename)
+        pathIconSrc = iconId !== 'default-file' ? getIconUrl(iconId) : null
+    }
+
+    return { pattern, fileType, path, pathIconSrc }
+})
+
+// --- Glob tool summary ---
+const isGlob = computed(() => props.name === 'Glob')
+const globPattern = computed(() => {
+    if (!isGlob.value) return null
+    return props.input?.pattern || null
 })
 
 // Input without description for display
@@ -293,6 +342,25 @@ const displayInput = computed(() => {
 
 // Is this a Task tool_use?
 const isTask = computed(() => props.name === 'Task')
+
+// Task tool: display subagent_type instead of "Task"
+// "silent-failure-hunter" → "Silent failure hunter"
+function capitalize(str) {
+    return str.replace(/-/g, ' ').replace(/^\w/, c => c.toUpperCase())
+}
+
+const taskDisplayName = computed(() => {
+    if (!isTask.value || !props.input?.subagent_type) return null
+    const sat = props.input.subagent_type
+    const colonIdx = sat.indexOf(':')
+    if (colonIdx >= 0) {
+        return {
+            name: capitalize(sat.slice(colonIdx + 1)),
+            namespace: capitalize(sat.slice(0, colonIdx))
+        }
+    }
+    return { name: capitalize(sat), namespace: null }
+})
 
 // Agent link polling configuration
 const AGENT_POLLING_DELAY_MS = 3000
@@ -423,7 +491,8 @@ function navigateToSubagent(agentId) {
     <wa-details class="item-details tool-use" :class="{'with-right-part' : isTask && !parentSessionId}" icon-placement="start" @wa-show="onToolUseOpen" @wa-hide="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
-                <strong class="items-details-summary-name">{{ name.replaceAll('__', ' ') }}</strong>
+                <strong v-if="taskDisplayName" class="items-details-summary-name">{{ taskDisplayName.name }}<span v-if="taskDisplayName.namespace" class="items-details-summary-quiet"> ({{ taskDisplayName.namespace }})</span></strong>
+                <strong v-else class="items-details-summary-name">{{ name.replaceAll('__', ' ') }}</strong>
                 <template v-if="description">
                     <span class="items-details-summary-separator"> — </span>
                     <span v-if="fileIconSrc" class="items-details-summary-file">
@@ -431,6 +500,31 @@ function navigateToSubagent(agentId) {
                         <span class="items-details-summary-description">{{ description }}</span>
                     </span>
                     <span v-else class="items-details-summary-description">{{ description }}</span>
+                </template>
+                <!-- Skill tool: show skill name, with namespace in quiet mode -->
+                <template v-else-if="skillDescription">
+                    <span class="items-details-summary-separator"> — </span>
+                    <span class="items-details-summary-description">{{ skillDescription.name }}<span v-if="skillDescription.namespace" class="items-details-summary-quiet"> ({{ skillDescription.namespace }})</span></span>
+                </template>
+                <!-- Grep tool: "`pattern` in `type` files in [path]" -->
+                <template v-else-if="grepParts">
+                    <span class="items-details-summary-separator"> — </span>
+                    <span class="items-details-summary-description items-details-summary-grep">
+                        <code v-if="grepParts.pattern">{{ grepParts.pattern }}</code>
+                        <span v-if="grepParts.fileType">in <code>{{ grepParts.fileType }}</code> files</span>
+                        <span v-if="grepParts.path">in
+                            <span v-if="grepParts.pathIconSrc" class="items-details-summary-file">
+                                <img :src="grepParts.pathIconSrc" class="items-details-summary-file-icon" loading="lazy" width="16" height="16" />
+                                <span>{{ grepParts.path }}</span>
+                            </span>
+                            <span v-else>{{ grepParts.path }}</span>
+                        </span>
+                    </span>
+                </template>
+                <!-- Glob tool: show pattern in code -->
+                <template v-else-if="globPattern">
+                    <span class="items-details-summary-separator"> — </span>
+                    <span class="items-details-summary-description"><code>{{ globPattern }}</code></span>
                 </template>
             </span>
             <!-- View Agent button for Task tool_use (only in regular sessions) -->
@@ -535,6 +629,28 @@ wa-details {
 .items-details-summary-file-icon {
     vertical-align: text-bottom;
     flex-shrink: 0;
+}
+
+.items-details-summary-quiet {
+    color: var(--wa-color-text-quiet);
+}
+
+.items-details-summary-grep {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    flex-wrap: wrap;
+    & > span {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--wa-space-xs);
+    }
+}
+
+.items-details-summary-description code {
+    font-size: 1em;
+    background: var(--wa-color-neutral-fill-quiet);
+    border-radius: var(--wa-border-radius-s);
 }
 
 .tool-input {

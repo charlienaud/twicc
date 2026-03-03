@@ -113,7 +113,7 @@ function onChildMenuSelect(event, proj) {
 
 .folder-label {
     font-size: var(--wa-font-size-s);
-    font-family: var(--wa-font-mono);
+    font-family: var(--wa-font-family-code);
     font-weight: 500;
 }
 

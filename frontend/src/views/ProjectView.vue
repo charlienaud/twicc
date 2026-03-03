@@ -1212,7 +1212,7 @@ wa-split-panel::part(divider) {
 }
 
 .tree-folder-label {
-    font-family: var(--wa-font-mono);
+    font-family: var(--wa-font-family-code);
     font-size: var(--wa-font-size-s);
 }
 
