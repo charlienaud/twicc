@@ -766,6 +766,25 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
                 session.cwd_git_branch = last_cwd_git_branch
             if last_model and last_model != session.model:
                 session.model = last_model
+
+            # Update resolved git directory/branch from the latest item that has one
+            # (items are processed in order, so the last one wins)
+            for item, _ in reversed(items_to_create):
+                if item.git_directory:
+                    if item.git_directory != session.git_directory or item.git_branch != session.git_branch:
+                        session.git_directory = item.git_directory
+                        session.git_branch = item.git_branch
+                    break
+
+            # Fallback: if no item provided git info, try resolving from the session's cwd.
+            # This handles sessions where the agent only uses Bash (no tool_use with file paths),
+            # so resolve_git_for_item has nothing to work with.
+            if not session.git_directory and session.cwd:
+                from twicc.compute import _resolve_git_from_path
+                cwd_git = _resolve_git_from_path(session.cwd, use_cache=False)
+                if cwd_git:
+                    session.git_directory, session.git_branch = cwd_git
+
             is_new_session = session.created_at is None and first_timestamp is not None
             if is_new_session:
                 session.created_at = first_timestamp
@@ -782,7 +801,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
         # Update offset to end of file
         session.last_offset = f.tell()
         session.mtime = file_mtime
-        session.save(update_fields=["last_offset", "last_line", "mtime", "user_message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "model", "created_at"])
+        session.save(update_fields=["last_offset", "last_line", "mtime", "user_message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "git_directory", "git_branch", "model", "created_at"])
 
         # Recalculate activities after session.save (needs created_at in DB for session_count)
         if lines:

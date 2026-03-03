@@ -140,7 +140,7 @@ def ensure_project_git_root(project_id: str, directory: str | None = None) -> No
         if not directory:
             return
 
-    result = _resolve_git_from_path(directory)
+    result = _resolve_git_from_path(directory, use_cache=False)
     git_root = result[0] if result else None
 
     # Check if update needed
@@ -197,16 +197,18 @@ _TOOL_PATH_FIELDS: dict[str, str] = {
     'Glob': 'path',
 }
 
-# Module-level cache for live compute: directory path → (git_directory, git_branch) or None
+# Module-level cache for batch compute: directory path → (git_directory, git_branch) or None
 _git_resolution_cache: dict[str, tuple[str, str] | None] = {}
 
 
-def _resolve_git_from_path(dir_path: str) -> tuple[str, str] | None:
+def _resolve_git_from_path(dir_path: str, *, use_cache: bool = True) -> tuple[str, str] | None:
     """
     Walk up from dir_path to find a .git entry and resolve git directory and branch.
 
     Args:
         dir_path: An absolute directory path to start from
+        use_cache: Whether to read from and write to the module-level resolution cache.
+                   Set to False for live resolution where fresh results are needed.
 
     Returns:
         (git_directory, git_branch) tuple, or None if no .git found
@@ -216,7 +218,7 @@ def _resolve_git_from_path(dir_path: str) -> tuple[str, str] | None:
 
     while True:
         # Check cache for this directory
-        if current in _git_resolution_cache:
+        if use_cache and current in _git_resolution_cache:
             result = _git_resolution_cache[current]
             # Cache all traversed intermediate paths
             for path in traversed:
@@ -232,16 +234,18 @@ def _resolve_git_from_path(dir_path: str) -> tuple[str, str] | None:
                 branch = _read_head_branch(os.path.join(git_path, 'HEAD'))
                 result = (current, branch) if branch is not None else None
                 # Cache all traversed paths
-                for path in traversed:
-                    _git_resolution_cache[path] = result
+                if use_cache:
+                    for path in traversed:
+                        _git_resolution_cache[path] = result
                 return result
 
             elif os.path.isfile(git_path):
                 # Worktree: .git is a file containing "gitdir: /path/to/.git/worktrees/name"
                 result = _resolve_worktree_git(current, git_path)
                 # Cache all traversed paths
-                for path in traversed:
-                    _git_resolution_cache[path] = result
+                if use_cache:
+                    for path in traversed:
+                        _git_resolution_cache[path] = result
                 return result
 
         except OSError:
@@ -252,8 +256,9 @@ def _resolve_git_from_path(dir_path: str) -> tuple[str, str] | None:
         parent = os.path.dirname(current)
         if parent == current:
             # Reached filesystem root without finding .git
-            for path in traversed:
-                _git_resolution_cache[path] = None
+            if use_cache:
+                for path in traversed:
+                    _git_resolution_cache[path] = None
             return None
         current = parent
 
@@ -356,7 +361,7 @@ def extract_paths_from_tool_uses(parsed_json: dict) -> list[str]:
     return paths
 
 
-def resolve_git_for_item(parsed_json: dict) -> tuple[str, str] | None:
+def resolve_git_for_item(parsed_json: dict, *, use_cache: bool = True) -> tuple[str, str] | None:
     """
     Resolve git directory and branch for a session item.
 
@@ -365,6 +370,9 @@ def resolve_git_for_item(parsed_json: dict) -> tuple[str, str] | None:
 
     Args:
         parsed_json: Parsed JSON content of the item
+        use_cache: Whether to use the module-level git resolution cache.
+                   Set to False for live resolution where fresh results are needed.
+                   Passed through to _resolve_git_from_path.
 
     Returns:
         (git_directory, git_branch) tuple, or None if no paths or no git found
@@ -377,7 +385,7 @@ def resolve_git_for_item(parsed_json: dict) -> tuple[str, str] | None:
     for path in paths:
         # Use the directory part of the path (for files)
         dir_path = os.path.dirname(path) if not os.path.isdir(path) else path
-        result = _resolve_git_from_path(dir_path)
+        result = _resolve_git_from_path(dir_path, use_cache=use_cache)
         if result is not None:
             resolutions.append(result)
 
@@ -396,11 +404,6 @@ def resolve_git_for_item(parsed_json: dict) -> tuple[str, str] | None:
             return r
 
     return resolutions[0]  # Fallback (shouldn't reach here)
-
-
-def clear_git_resolution_cache() -> None:
-    """Clear the module-level git resolution cache."""
-    _git_resolution_cache.clear()
 
 
 # =============================================================================
@@ -1450,6 +1453,15 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     # Note: costs (self_cost, subagents_cost, total_cost) are NOT included here.
     # They are recalculated from SessionItem data in the main process after items are written,
     # using Session.recalculate_costs(). This avoids order-of-processing issues with subagents.
+
+    # Fallback: if no item provided git info, try resolving from the session's cwd.
+    # This handles sessions where the agent only uses Bash (no tool_use with file paths).
+    # Uses use_cache=True (default) since background compute benefits from caching across sessions.
+    if not last_resolved_git_directory and last_cwd:
+        cwd_git = _resolve_git_from_path(last_cwd)
+        if cwd_git:
+            last_resolved_git_directory, last_resolved_git_branch = cwd_git
+
     result_queue.put(orjson.dumps({
         'type': 'session_complete',
         'session_id': session_id,
@@ -1864,15 +1876,10 @@ def compute_item_metadata_live(session_id: str, item: SessionItem, content: str)
     item.display_level = metadata['display_level']
     item.kind = metadata['kind']
 
-    # Resolve git directory/branch from tool_use paths
-    git_resolution = resolve_git_for_item(parsed)
+    # Resolve git directory/branch from tool_use paths (no cache for live resolution)
+    git_resolution = resolve_git_for_item(parsed, use_cache=False)
     if git_resolution is not None:
         item.git_directory, item.git_branch = git_resolution
-        # Update session-level git fields
-        Session.objects.filter(id=session_id).update(
-            git_directory=git_resolution[0],
-            git_branch=git_resolution[1],
-        )
 
     # Initialize group fields
     item.group_head = None
