@@ -7,6 +7,7 @@ import { getIconUrl, getFileIconId } from '../../../utils/fileIcons'
 import { AGENT_TOOL_NAMES } from '../../../constants'
 import { getTodoDescription } from '../../../utils/todoList'
 import JsonHumanView from '../../JsonHumanView.vue'
+import TodoContent from './TodoContent.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -564,7 +565,8 @@ function navigateToSubagent(agentId) {
             </template>
         </span>
         <template v-if="isOpen">
-            <div v-if="displayInput" class="tool-input">
+            <TodoContent v-if="isTodoWrite && input?.todos" :todos="input.todos" />
+            <div v-else-if="displayInput" class="tool-input">
                 <JsonHumanView
                     :value="displayInput"
                 />
@@ -572,7 +574,7 @@ function navigateToSubagent(agentId) {
             <div v-else class="tool-no-input">
                 No input parameters
             </div>
-            <wa-details ref="resultDetailsRef" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
+            <wa-details v-if="!isTodoWrite" ref="resultDetailsRef" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
                 <span slot="summary">Result</span>
                 <div class="tool-result-content">
                     <div v-if="resultState === 'loading'" class="tool-result-loading">
