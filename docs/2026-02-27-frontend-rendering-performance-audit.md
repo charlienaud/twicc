@@ -11,43 +11,19 @@
 
 ## 1. Problèmes critiques (impact élevé)
 
-### 1.1 🔴 `SessionList.vue` — Timer 1s provoquant des re-rendus globaux
+### 1.1 ✅ ~~`SessionList.vue` — Timer 1s provoquant des re-rendus globaux~~
 
-**Fichier:** `SessionList.vue:298-305`
-
-```js
-const now = ref(Date.now() / 1000)
-durationTimer = setInterval(() => {
-    now.value = Date.now() / 1000
-}, 1000)
-```
-
-**Problème:** Ce `setInterval` met à jour `now` chaque seconde. Comme `now` est utilisé dans `getStateDuration()`, **tous les items visibles du scroller de sessions** sont re-rendus chaque seconde, même si seulement 1-2 sessions ont un processus actif. La majorité du re-rendu est inutile.
-
-**Impact:** Re-rendu complet de la liste de sessions 1×/seconde, en permanence. Le template appelle `getProcessState(session.id)` jusqu'à **~10 fois par item de session** (voir 1.2), ce qui amplifie le coût.
-
-**Suggestion:** Ne faire tourner le timer que s'il existe des processus en état `assistant_turn`, et isoler le composant de durée pour que seuls les sessions concernées re-rendent.
+**Résolu** par l'extraction d'un composant `ProcessDuration` qui encapsule son propre `setInterval(1s)`. Le `ref(now)` n'est plus une dépendance réactive de `SessionList` ni de `SessionHeader` — seul le `<span>` du composant se re-rend chaque seconde, et uniquement pour les sessions en `assistant_turn`. Le composant supporte KeepAlive via `onActivated`/`onDeactivated`.
 
 ---
 
-### 1.2 🔴 `SessionList.vue` — Appels multiples redondants à `getProcessState()` et `getPendingRequest()` dans le template
+### 1.2 ✅ ~~`SessionList.vue` — Appels multiples redondants à `getProcessState()` et `getPendingRequest()` dans le template~~
 
-**Fichier:** `SessionList.vue:585-648` (template, dans le `v-for`)
-
-Pour **chaque session** dans la liste, le template appelle :
-- `getProcessState(session.id)` : **~8 à 10 fois** (lignes 594, 602, 604, 608-609, 615, 617, 620-621, 627-628, 647)
-- `store.getPendingRequest(session.id)` : **~4 fois** (lignes 594, 599, 602, 635, 640)
-- `store.getProject(session.project_id)` : **2 fois** (ligne 585)
-
-**Problème:** Ces getters Pinia utilisent le pattern `(state) => (id) => ...` (getter qui retourne une fonction). Ce pattern **n'est pas mis en cache par Pinia** — chaque appel exécute la fonction à nouveau. Comme ces getters sont appelés des dizaines de fois par item à chaque re-rendu (et le re-rendu est déclenché chaque seconde par le timer ci-dessus), l'impact est multiplicatif.
-
-**Impact:** Pour 30 sessions visibles × 10 appels × 1/seconde = ~300 exécutions de getters/seconde, la plupart redondantes.
-
-**Suggestion:** Extraire chaque appel dans un computed local ou un `v-memo` pattern, ou mieux : extraire un sous-composant `SessionListItem` qui ferait ces lookups une seule fois.
+**Résolu** par l'extraction d'un sous-composant `SessionListItem`. Chaque item fait ses lookups dans des `computed` (`processState`, `pendingRequest`, `project`) — un seul appel par getter par item, caché par Vue tant que les dépendances ne changent pas. `canStop` est aussi un computed au lieu d'une fonction appelée 3× dans le menu.
 
 ---
 
-### 1.3 🔴 `getProjectSessions` / `getAllSessions` — Nouvelles listes triées créées à chaque accès
+### 1.3 ⚪ ~~`getProjectSessions` / `getAllSessions` — Nouvelles listes triées créées à chaque accès~~ — **Négligeable**
 
 **Fichier:** `data.js:169-184`
 
@@ -66,11 +42,7 @@ getAllSessions: (state) => {
 },
 ```
 
-**Problème:** Ces getters retournent une **fonction** (pattern `(state) => (id) => ...`), donc Pinia ne les met **jamais** en cache. À chaque accès — et `SessionList.allSessions` computed les appelle — le code exécute `Object.values()`, double `filter()`, et `sort()` (O(n log n)) sur l'ensemble des sessions. Pire, `sessionSortComparator` dépend de `processStates`, donc le tri est recalculé même si les sessions n'ont pas changé.
-
-**Impact:** Avec plusieurs centaines de sessions, c'est un coût non-négligeable à chaque accès réactif, et cet accès est déclenché à chaque changement dans `sessions` ou `processStates`.
-
-**Suggestion:** Convertir en getters classiques retournant directement un objet (pas une fonction), et utiliser un computed par projectId si nécessaire.
+**Reclassé négligeable :** Après la résolution de 1.1 (timer 1s) et 1.2 (extraction de `SessionListItem`), ces getters ne sont plus réévalués chaque seconde. Le `computed` dans `SessionList` ne se réexécute que lorsqu'une dépendance réactive réelle change (ajout/modification de session, changement de `processStates`). Le coût O(n log n) sur quelques centaines de sessions est sous la milliseconde. Convertir en getters directs nécessiterait un getter par `projectId` ou un système de cache manuel, ajoutant de la complexité pour un gain imperceptible.
 
 ---
 
@@ -311,9 +283,9 @@ Le code contient aussi plusieurs excellents patterns de performance qu'il faut s
 
 | Priorité | Problème | Impact estimé |
 |----------|----------|---------------|
-| 🔴 Critique | Timer 1s dans SessionList | Re-rendu global chaque seconde |
-| 🔴 Critique | Appels multiples getProcessState/getPendingRequest par session item dans template | ×10 par item × 30 visibles × 1/s |
-| 🔴 Critique | getProjectSessions/getAllSessions non-cachés | O(n log n) à chaque accès réactif |
+| ✅ ~~Critique~~ | ~~Timer 1s dans SessionList~~ | ~~Re-rendu global chaque seconde~~ |
+| ✅ ~~Critique~~ | ~~Appels multiples getProcessState/getPendingRequest par session item dans template~~ | ~~×10 par item × 30 visibles × 1/s~~ |
+| ⚪ ~~Critique~~ | ~~getProjectSessions/getAllSessions non-cachés~~ | Négligeable (sous 1ms, déclenché uniquement sur changement réel) |
 | ✅ ~~Critique~~ | ~~recomputeVisualItems avec JSON.parse/stringify fréquent~~ | ~~Parsing coûteux à chaque WS message~~ |
 | 🔴 Critique | recomputeAllVisualItems sur toutes les sessions | N × recompute au changement de mode |
 | ⚪ ~~Important~~ | computeVisualItems multi-passes avec allocations | Négligeable (JS pur, sous 1ms) |

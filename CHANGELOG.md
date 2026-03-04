@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Lazy-render wa-details content: tool use inputs/results, thinking blocks, and unknown entries are now only mounted when expanded (v-if on open state), saving significant CPU/memory on long conversations
 - Lazy parsed content caching for session items, eliminating redundant JSON parsing
 - Stabilize visual item references across recomputes, so Vue skips re-rendering unchanged items
+- Extract ProcessDuration component and SessionListItem sub-component to eliminate per-second global re-renders and redundant store lookups in session list
 
 ### Fixed
 

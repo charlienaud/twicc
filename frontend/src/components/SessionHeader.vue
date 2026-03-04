@@ -1,12 +1,13 @@
 <script setup>
-import { ref, computed, watch, inject } from 'vue'
+import { ref, computed, inject } from 'vue'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
-import { formatDate, formatDuration } from '../utils/date'
+import { formatDate } from '../utils/date'
 import { MAX_CONTEXT_TOKENS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_NAMES } from '../constants'
 import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
+import ProcessDuration from './ProcessDuration.vue'
 import CostDisplay from './CostDisplay.vue'
 import AppTooltip from './AppTooltip.vue'
 
@@ -172,34 +173,6 @@ function handleStopProcess() {
     }
 }
 
-// KeepAlive active state (provided by SessionView)
-const sessionActive = inject('sessionActive', ref(true))
-
-// Timer for updating state durations — paused when the session is inactive
-const now = ref(Date.now() / 1000)
-let durationTimer = null
-
-watch(sessionActive, (active) => {
-    if (active) {
-        now.value = Date.now() / 1000
-        durationTimer = setInterval(() => {
-            now.value = Date.now() / 1000
-        }, 1000)
-    } else if (durationTimer) {
-        clearInterval(durationTimer)
-        durationTimer = null
-    }
-}, { immediate: true })
-
-/**
- * Calculate state duration for a process.
- * @param {object} procState
- * @returns {number} Duration in seconds
- */
-function getStateDuration(procState) {
-    if (!procState?.state_changed_at) return 0
-    return Math.max(0, Math.floor(now.value - procState.state_changed_at))
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Compact header mode on small viewports
@@ -449,14 +422,13 @@ defineExpose({
                     v-if="processState"
                 >
                     <div style="flex-grow: 1"></div>
-                    <span
+                    <ProcessDuration
                         v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
+                        :state-changed-at="processState.state_changed_at"
                         :id="`session-header-${sessionId}-process-duration`"
                         class="process-duration"
                         :style="{ color: getProcessColor(processState.state) }"
-                    >
-                        {{ formatDuration(getStateDuration(processState)) }}
-                    </span>
+                    />
                     <AppTooltip v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">Assistant turn duration</AppTooltip>
 
                     <span
