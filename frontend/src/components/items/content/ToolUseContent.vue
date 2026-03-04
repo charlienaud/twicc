@@ -5,6 +5,7 @@ import { useDataStore } from '../../../stores/data'
 import { apiFetch } from '../../../utils/api'
 import { getIconUrl, getFileIconId } from '../../../utils/fileIcons'
 import { AGENT_TOOL_NAMES } from '../../../constants'
+import { getTodoDescription } from '../../../utils/todoList'
 import JsonHumanView from '../../JsonHumanView.vue'
 
 const route = useRoute()
@@ -284,7 +285,7 @@ const description = computed(() => {
         return filePath
     }
     // Special tools have their own summary rendering
-    if (isSkill.value || isGrep.value || isGlob.value) return null
+    if (isSkill.value || isGrep.value || isGlob.value || isTodoWrite.value) return null
     return props.input?.description || null
 })
 
@@ -333,6 +334,13 @@ const isGlob = computed(() => props.name === 'Glob')
 const globPattern = computed(() => {
     if (!isGlob.value) return null
     return props.input?.pattern || null
+})
+
+// --- TodoWrite tool summary ---
+const isTodoWrite = computed(() => props.name === 'TodoWrite')
+const todoDescription = computed(() => {
+    if (!isTodoWrite.value) return null
+    return getTodoDescription(props.input?.todos)
 })
 
 // Input without description for display
@@ -498,6 +506,7 @@ function navigateToSubagent(agentId) {
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
                 <strong v-if="taskDisplayName" class="items-details-summary-name">{{ taskDisplayName.name }}<span v-if="taskDisplayName.namespace" class="items-details-summary-quiet"> ({{ taskDisplayName.namespace }})</span></strong>
+                <strong v-else-if="isTodoWrite" class="items-details-summary-name">Todo</strong>
                 <strong v-else class="items-details-summary-name">{{ name.replaceAll('__', ' ') }}</strong>
                 <template v-if="description">
                     <span class="items-details-summary-separator"> — </span>
@@ -531,6 +540,13 @@ function navigateToSubagent(agentId) {
                 <template v-else-if="globPattern">
                     <span class="items-details-summary-separator"> — </span>
                     <span class="items-details-summary-description"><code>{{ globPattern }}</code></span>
+                </template>
+                <!-- TodoWrite tool: show progress description -->
+                <template v-else-if="todoDescription">
+                    <template v-for="(part, i) in todoDescription" :key="i">
+                        <span class="items-details-summary-separator"> — </span>
+                        <span class="items-details-summary-description">{{ part.text }}<wa-icon v-if="part.status === 'completed'" name="check" class="todo-icon todo-icon-completed"></wa-icon></span>
+                    </template>
                 </template>
             </span>
             <!-- View Agent button for Task tool_use (only in regular sessions) -->
@@ -699,5 +715,15 @@ wa-details {
 
 .tool-result-data {
     overflow-x: auto;
+}
+
+.todo-icon {
+    margin-left: var(--wa-space-xs);
+    font-size: 0.85em;
+    vertical-align: baseline;
+}
+
+.todo-icon-completed {
+    color: var(--wa-color-success-60);
 }
 </style>
