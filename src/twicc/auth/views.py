@@ -11,12 +11,83 @@ to the stored hash using constant-time comparison.
 import hashlib
 import hmac
 import logging
+import time
+from collections import defaultdict
 
 import orjson
 from django.conf import settings
 from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
+
+
+# ── Rate limiter for login brute-force protection ─────────────────────────
+
+# Per-IP tracking of failed login attempts
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+
+# Max failed attempts before throttling
+_MAX_ATTEMPTS = 5
+# Time window in seconds (failed attempts older than this are forgotten)
+_WINDOW_SECONDS = 300  # 5 minutes
+# Lockout duration after exceeding max attempts
+_LOCKOUT_SECONDS = 60
+
+
+def _check_rate_limit(ip: str) -> int | None:
+    """Check if an IP is rate-limited.
+
+    Returns None if allowed, or the number of seconds to wait if blocked.
+    """
+    now = time.monotonic()
+    attempts = _login_attempts[ip]
+
+    # Prune old attempts outside the window
+    _login_attempts[ip] = [t for t in attempts if now - t < _WINDOW_SECONDS]
+    attempts = _login_attempts[ip]
+
+    if len(attempts) >= _MAX_ATTEMPTS:
+        last_attempt = attempts[-1]
+        wait = int(_LOCKOUT_SECONDS - (now - last_attempt))
+        if wait > 0:
+            return wait
+        # Lockout expired — clear and allow
+        _login_attempts[ip] = []
+
+    return None
+
+
+def _record_failed_attempt(ip: str) -> None:
+    """Record a failed login attempt for rate limiting."""
+    _login_attempts[ip].append(time.monotonic())
+
+
+def _get_client_ip(request) -> str:
+    """Extract the real client IP from the request.
+
+    Checks proxy/tunnel headers in priority order before falling back to REMOTE_ADDR.
+    Only the leftmost (client) IP is used from X-Forwarded-For to avoid spoofing
+    via appended values.
+
+    Header priority:
+        1. CF-Connecting-IP  (Cloudflare Tunnel)
+        2. Fly-Client-IP     (Fly.io)
+        3. X-Real-IP         (Nginx convention)
+        4. X-Forwarded-For   (standard proxy header, first IP only)
+        5. REMOTE_ADDR       (direct connection fallback)
+    """
+    # Tunnel/proxy-specific headers (single IP, most trustworthy when present)
+    for header in ("HTTP_CF_CONNECTING_IP", "HTTP_FLY_CLIENT_IP", "HTTP_X_REAL_IP"):
+        ip = request.META.get(header)
+        if ip:
+            return ip.strip()
+
+    # Standard proxy header — take the first (leftmost) IP only
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+
+    return request.META.get("REMOTE_ADDR", "unknown")
 
 
 def _hash_password(password: str) -> str:
@@ -60,6 +131,17 @@ def login(request):
     if not settings.TWICC_PASSWORD_HASH:
         return JsonResponse({"error": "No password configured"}, status=400)
 
+    ip = _get_client_ip(request)
+
+    # Rate limit check
+    wait = _check_rate_limit(ip)
+    if wait is not None:
+        logger.warning("Login rate-limited for %s (%ds remaining)", ip, wait)
+        return JsonResponse(
+            {"error": f"Too many attempts. Try again in {wait}s."},
+            status=429,
+        )
+
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
@@ -71,10 +153,14 @@ def login(request):
     # Constant-time comparison to prevent timing attacks
     if hmac.compare_digest(password_hash, settings.TWICC_PASSWORD_HASH):
         request.session["authenticated"] = True
-        logger.info("Successful login from %s", request.META.get("REMOTE_ADDR"))
+        # Clear failed attempts on success
+        _login_attempts.pop(ip, None)
+        logger.info("Successful login from %s", ip)
         return JsonResponse({"authenticated": True})
     else:
-        logger.warning("Failed login attempt from %s", request.META.get("REMOTE_ADDR"))
+        _record_failed_attempt(ip)
+        remaining = _MAX_ATTEMPTS - len(_login_attempts[ip])
+        logger.warning("Failed login attempt from %s (%d attempts left)", ip, max(0, remaining))
         return JsonResponse({"error": "Invalid password"}, status=401)
 
 
