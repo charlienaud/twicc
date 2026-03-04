@@ -572,7 +572,7 @@ function navigateToSubagent(agentId) {
 </script>
 
 <template>
-    <wa-details class="item-details tool-use" :class="{'with-right-part' : isTask && !parentSessionId}" icon-placement="start" @wa-show="onToolUseOpen" @wa-hide="onToolUseClose">
+    <wa-details class="item-details tool-use" :class="{'with-right-part' : isTask && !parentSessionId}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
                 <strong v-if="taskDisplayName" class="items-details-summary-name">{{ taskDisplayName.name }}<span v-if="taskDisplayName.namespace" class="items-details-summary-quiet"> ({{ taskDisplayName.namespace }})</span></strong>
