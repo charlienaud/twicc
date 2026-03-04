@@ -42,7 +42,7 @@ const props = defineProps({
 
 const { isBelowBreakpoint: isMobile } = useContainerBreakpoint({
     containerSelector: '.main-content',
-    breakpoint: 640,
+    breakpoint: 800,
 })
 
 // API prefix: project-level for drafts, session-level otherwise

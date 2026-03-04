@@ -51,7 +51,7 @@ const refreshButtonId = useId()
 
 const { isBelowBreakpoint: isMobile } = useContainerBreakpoint({
     containerSelector: '.main-content',
-    breakpoint: 640,
+    breakpoint: 800,
 })
 
 // ---------------------------------------------------------------------------
