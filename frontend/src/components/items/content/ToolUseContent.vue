@@ -355,7 +355,7 @@ const description = computed(() => {
         return filePath
     }
     // Special tools have their own summary rendering
-    if (isSkill.value || isGrep.value || isGlob.value || isTodoWrite.value || isWebFetch.value || isWebSearch.value) return null
+    if (isSkill.value || isGrep.value || isGlob.value || isTodoWrite.value || isWebFetch.value || isWebSearch.value || isToolSearch.value) return null
     return props.input?.description || null
 })
 
@@ -417,6 +417,13 @@ const webFetchUrl = computed(() => {
 const isWebSearch = computed(() => props.name === 'WebSearch')
 const webSearchQuery = computed(() => {
     if (!isWebSearch.value) return null
+    return props.input?.query || null
+})
+
+// --- ToolSearch tool summary ---
+const isToolSearch = computed(() => props.name === 'ToolSearch')
+const toolSearchQuery = computed(() => {
+    if (!isToolSearch.value) return null
     return props.input?.query || null
 })
 
@@ -634,6 +641,11 @@ function navigateToSubagent(agentId) {
                 <template v-else-if="webSearchQuery">
                     <span class="items-details-summary-separator"> — </span>
                     <span class="items-details-summary-description">{{ webSearchQuery }}</span>
+                </template>
+                <!-- ToolSearch tool: show query -->
+                <template v-else-if="toolSearchQuery">
+                    <span class="items-details-summary-separator"> — </span>
+                    <span class="items-details-summary-description">{{ toolSearchQuery }}</span>
                 </template>
                 <!-- TodoWrite tool: show progress description -->
                 <template v-else-if="todoDescription">
