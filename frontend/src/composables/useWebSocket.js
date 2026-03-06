@@ -260,11 +260,17 @@ export function useWebSocket() {
             }
         },
         onMessage(ws, event) {
+            let msg
             try {
-                const msg = JSON.parse(event.data)
-                handleMessage(msg)
+                msg = JSON.parse(event.data)
             } catch (e) {
                 console.warn('WebSocket received non-JSON message:', event.data)
+                return
+            }
+            try {
+                handleMessage(msg)
+            } catch (e) {
+                console.error('Error handling WebSocket message:', e, '\nMessage was:', msg)
             }
         }
     })
