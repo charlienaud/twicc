@@ -612,32 +612,34 @@ def get_tool_use_ids(parsed_json: dict) -> list[str]:
 
 def get_tool_result_id(parsed_json: dict) -> str | None:
     """
-    Extract the tool_use_id from a standalone tool_result item.
+    Extract the tool_use_id from a tool_result item.
 
-    Returns the tool_use_id string, or None if not a tool_result item.
+    Finds the first tool_result entry in the content array (may be bundled
+    with other items like text).
+
+    Returns the tool_use_id string, or None if no tool_result found.
     """
     content = get_message_content_list(parsed_json, "user")
-    if content is None or len(content) != 1:
+    if content is None:
         return None
-    first = content[0]
-    if not isinstance(first, dict) or first.get('type') != 'tool_result':
-        return None
-    return first.get('tool_use_id')
+    for item in content:
+        if isinstance(item, dict) and item.get('type') == 'tool_result':
+            return item.get('tool_use_id')
+    return None
 
 
 def is_tool_result_item(parsed_json: dict) -> bool:
     """
-    Check if an item is a standalone tool_result.
+    Check if an item contains a tool_result.
 
     A tool_result item is a user message whose content array contains
-    a single entry of type "tool_result". These items also have
-    a "toolUseResult" key at root level.
+    at least one entry of type "tool_result" (possibly bundled with
+    other items like text).
     """
     content = get_message_content_list(parsed_json, "user")
-    if content is None or len(content) != 1:
+    if content is None:
         return False
-    first = content[0]
-    return isinstance(first, dict) and first.get('type') == 'tool_result'
+    return any(isinstance(item, dict) and item.get('type') == 'tool_result' for item in content)
 
 
 def get_task_tool_uses(parsed_json: dict) -> list[str]:
@@ -672,15 +674,19 @@ def get_tool_result_agent_info(parsed_json: dict) -> tuple[str, str] | None:
     Returns:
         Tuple of (tool_use_id, agent_id) if found, None otherwise
     """
-    # Must be a tool_result item
+    # Must contain a tool_result item
     content = get_message_content_list(parsed_json, "user")
-    if content is None or len(content) != 1:
+    if content is None:
         return None
-    first = content[0]
-    if not isinstance(first, dict) or first.get('type') != 'tool_result':
+    tool_result = None
+    for item in content:
+        if isinstance(item, dict) and item.get('type') == 'tool_result':
+            tool_result = item
+            break
+    if tool_result is None:
         return None
 
-    tool_use_id = first.get('tool_use_id')
+    tool_use_id = tool_result.get('tool_use_id')
     if not tool_use_id:
         return None
 
@@ -847,6 +853,12 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
         # System XML messages (commands, outputs) are SYSTEM kind
         if _is_system_xml_content(content):
             return ItemKind.SYSTEM
+
+        # Tool results bundled with text (e.g. "Tool loaded.") are CONTENT_ITEMS, not user messages
+        if isinstance(content, list) and any(
+            isinstance(item, dict) and item.get('type') == 'tool_result' for item in content
+        ):
+            return ItemKind.CONTENT_ITEMS
 
         # Only user messages with visible content count as USER_MESSAGE
         if text or _has_visible_content(content):
