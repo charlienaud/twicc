@@ -893,7 +893,22 @@ body.sidebar-closed .message-input-toolbar {
     }
 }
 
-/* On mobile, hide the model label text in the closed select — only the icon is visible */
+.message-input-actions {
+    display: flex;
+    gap: var(--wa-space-s);
+    flex-shrink: 0;
+
+    .cancel-button, .reset-button, .send-button {
+        wa-icon {
+            display: none;
+        }
+        & > span {
+            display: inline-block;
+        }
+    }
+}
+
+/* On mobile, only show icons */
 @container message-input (width < 35rem) {
     .model-select, .permission-mode-select {
         &::part(display-input) {
@@ -914,28 +929,16 @@ body.sidebar-closed .message-input-toolbar {
             translate: -13.5rem 0;
         }
     }
-}
-
-
-.message-input-actions {
-    display: flex;
-    gap: var(--wa-space-s);
-    flex-shrink: 0;
-
-    .cancel-button, .reset-button, .send-button {
-        wa-icon {
-            display: none;
-        }
-        & > span {
-            display: inline-block;
-        }
-        @media (width < 400px) {
+    .message-input-actions {
+        .cancel-button, .reset-button, .send-button {
             &::part(base) {
                 padding-inline: var(--wa-space-s);
             }
+
             wa-icon {
                 display: inline-flex;
             }
+
             & > span {
                 display: none;
             }
