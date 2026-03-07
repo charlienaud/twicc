@@ -1,8 +1,17 @@
 <script setup>
 import { computed, ref, watch, onUnmounted } from 'vue'
 import { AGENT_TOOL_NAMES } from '../../constants'
+import ProcessIndicator from '../ProcessIndicator.vue'
 
 const props = defineProps({
+    label: {
+        type: String,
+        default: null
+    },
+    processState: {
+        type: String,
+        default: 'assistant_turn'
+    },
     toolUse: {
         type: Object,
         default: null
@@ -104,8 +113,8 @@ onUnmounted(() => {
 
 <template>
     <div class="working-assistant-message text-content">
-        <wa-spinner></wa-spinner>
-        <span>Claude is {{ displayedAction || 'working' }}...</span>
+        <ProcessIndicator :state="processState" size="small" :animate-states="['starting', 'assistant_turn']" />
+        <span>Claude is {{ label || displayedAction || 'working' }}...</span>
     </div>
 </template>
 

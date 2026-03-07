@@ -52,6 +52,10 @@ const props = defineProps({
 
 const emit = defineEmits(['toggle-suffix'])
 
+const isStartingAssistantMessage = computed(() =>
+    props.data?.syntheticKind === SYNTHETIC_ITEM.STARTING_ASSISTANT_MESSAGE.kind
+)
+
 const isWorkingAssistantMessage = computed(() =>
     props.data?.syntheticKind === SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.kind
 )
@@ -74,7 +78,8 @@ const contentItems = computed(() => {
 </script>
 
 <template>
-    <WorkingAssistantMessage v-if="isWorkingAssistantMessage" :tool-use="data.toolUse || null" :tool-use-completed="data.toolUseCompleted || false" />
+    <WorkingAssistantMessage v-if="isStartingAssistantMessage" label="starting" process-state="starting" />
+    <WorkingAssistantMessage v-else-if="isWorkingAssistantMessage" :tool-use="data.toolUse || null" :tool-use-completed="data.toolUseCompleted || false" />
     <ContentList
         v-else
         :items="contentItems"

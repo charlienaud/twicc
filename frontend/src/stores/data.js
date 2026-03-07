@@ -1101,6 +1101,29 @@ export const useDataStore = defineStore('data', {
                 allItems = [...allItems, optimistic]
             }
 
+            // Append a synthetic "starting" assistant message when in starting state.
+            // Same structure as the working message but with a simpler content.
+            const isStarting = processState?.state === PROCESS_STATE.STARTING
+            let startingMessage = null
+            if (isStarting) {
+                const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.STARTING_ASSISTANT_MESSAGE
+                startingMessage = {
+                    line_num: lineNum,
+                    content: null,
+                    kind: 'assistant_message',
+                    syntheticKind,
+                    display_level: DISPLAY_LEVEL.ALWAYS,
+                    group_head: null,
+                    group_tail: null,
+                }
+                setParsedContent(startingMessage, {
+                    type: 'assistant',
+                    syntheticKind,
+                    message: { role: 'assistant', content: [] },
+                })
+                allItems = allItems === items ? [...items, startingMessage] : [...allItems, startingMessage]
+            }
+
             // Append a synthetic "working" assistant message when in assistant_turn.
             // Injected into allItems so computeVisualItems handles it like any other item.
             // computeVisualItems knows to always let synthetic items (line_num < 0) through,
@@ -1173,6 +1196,8 @@ export const useDataStore = defineStore('data', {
                 const vi = visualItems[i]
                 if (vi.lineNum === SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE.lineNum && optimistic) {
                     vi.syntheticKind = optimistic.syntheticKind
+                } else if (vi.lineNum === SYNTHETIC_ITEM.STARTING_ASSISTANT_MESSAGE.lineNum && startingMessage) {
+                    vi.syntheticKind = startingMessage.syntheticKind
                 } else if (vi.lineNum === SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.lineNum && workingMessage) {
                     vi.syntheticKind = workingMessage.syntheticKind
                 }
@@ -1646,7 +1671,9 @@ export const useDataStore = defineStore('data', {
          * @param {object} extra - Additional fields: started_at, state_changed_at, memory, error, pending_request, session_title, project_name
          */
         setProcessState(sessionId, projectId, state, extra = {}) {
-            const wasAssistantTurn = this.processStates[sessionId]?.state === PROCESS_STATE.ASSISTANT_TURN
+            const previousState = this.processStates[sessionId]?.state
+            const wasAssistantTurn = previousState === PROCESS_STATE.ASSISTANT_TURN
+            const wasStarting = previousState === PROCESS_STATE.STARTING
 
             if (state === 'dead') {
                 // Remove dead processes from the map
@@ -1671,10 +1698,11 @@ export const useDataStore = defineStore('data', {
                 }
             }
 
-            // Recompute visual items only when isAssistantTurn changes
-            // (controls the synthetic working message and conversation mode filtering)
+            // Recompute visual items when isAssistantTurn or isStarting changes
+            // (controls the synthetic working/starting messages and conversation mode filtering)
+            const isStarting = state === PROCESS_STATE.STARTING
             const isAssistantTurn = state === PROCESS_STATE.ASSISTANT_TURN
-            if (wasAssistantTurn !== isAssistantTurn) {
+            if (wasAssistantTurn !== isAssistantTurn || wasStarting !== isStarting) {
                 this.recomputeVisualItems(sessionId)
             }
         },

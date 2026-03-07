@@ -106,6 +106,7 @@ export const DISPLAY_LEVEL = {
  */
 export const SYNTHETIC_ITEM = {
     OPTIMISTIC_USER_MESSAGE: { lineNum: -2000, kind: 'optimistic-user-message' },
+    STARTING_ASSISTANT_MESSAGE: { lineNum: -1500, kind: 'starting-assistant-message' },
     WORKING_ASSISTANT_MESSAGE: { lineNum: -1000, kind: 'working-assistant-message' },
 }
 

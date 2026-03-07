@@ -547,6 +547,16 @@ async function handleSend() {
                 ? { images: payload.images, documents: payload.documents }
                 : undefined
             store.setOptimisticMessage(props.sessionId, text, attachments)
+
+            // Set optimistic STARTING state if no process is running yet.
+            // The backend broadcasts STARTING before spawning the subprocess,
+            // but the SDK connect() blocks the asyncio event loop, so the
+            // WebSocket message only arrives after the subprocess is ready
+            // (~2-4 seconds later, alongside ASSISTANT_TURN). This optimistic
+            // state gives immediate visual feedback to the user.
+            if (!state) {
+                store.setProcessState(props.sessionId, props.projectId, 'starting')
+            }
         }
 
         // Clear draft message from store (and IndexedDB)
