@@ -16,7 +16,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from watchfiles import Change, awatch
 
-from twicc.compute import cache_agent_prompt, compute_item_cost_and_usage, compute_item_metadata, \
+from twicc.compute import AgentLinkUpdate, cache_agent_prompt, compute_item_cost_and_usage, compute_item_metadata, \
     compute_item_metadata_live, create_agent_link_from_subagent, create_agent_link_from_tool_result, \
     create_agent_link_from_tool_use, create_tool_result_link_live, ensure_project_directory, ensure_project_git_root, \
     extract_item_timestamp, \
@@ -196,7 +196,7 @@ def check_file_has_content_async(file_path: Path) -> bool:
 
 
 @sync_to_async
-def sync_session_items_async(session: Session, file_path: Path) -> tuple[list[int], list[int]]:
+def sync_session_items_async(session: Session, file_path: Path) -> tuple[list[int], list[int], list[AgentLinkUpdate]]:
     """Synchronize session items from a JSONL file (async wrapper).
 
     The session must already be saved to the database.
@@ -205,6 +205,7 @@ def sync_session_items_async(session: Session, file_path: Path) -> tuple[list[in
         A tuple of:
         - List of line_nums of new items added (sorted)
         - List of line_nums of pre-existing items whose metadata was updated (sorted)
+        - List of AgentLinkUpdates to broadcast
     """
     return sync_session_items(session, file_path)
 
@@ -351,7 +352,7 @@ async def sync_and_broadcast(
         pending_model = pop_pending_selected_model(parsed.session_id)
         session = await create_session(parsed, project, parent_session, permission_mode=pending_mode, selected_model=pending_model)
 
-    new_line_nums, modified_line_nums = await sync_session_items_async(session, path)
+    new_line_nums, modified_line_nums, agent_link_updates = await sync_session_items_async(session, path)
 
     if new_line_nums:
         # Refresh session to get computed values
@@ -396,6 +397,20 @@ async def sync_and_broadcast(
                 "type": "project_updated",
                 "project": serialize_project(project),
             })
+
+            # Broadcast agent link state changes (subagent started/completed)
+            for update in agent_link_updates:
+                await broadcast_message(channel_layer, {
+                    "type": "subagent_state_changed",
+                    "parent_session_id": update.parent_session_id,
+                    "agent_session_id": update.agent_id,
+                    "tool_use_id": update.tool_use_id,
+                    "project_id": parsed.project_id,
+                    "is_done": update.is_done,
+                    "is_background": update.is_background,
+                    "started_at": update.started_at.isoformat() if update.started_at else None,
+                    "completed_at": update.completed_at.isoformat() if update.completed_at else None,
+                })
     elif session.stale:
         # File reappeared - unstale
         session.stale = False
@@ -470,7 +485,7 @@ async def start_watcher() -> None:
                 logger.exception("Error processing watcher change %s on %s", change_type, path_str)
 
 
-def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], list[int]]:
+def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], list[int], list[AgentLinkUpdate]]:
     """
     Synchronize session items from a JSONL file.
 
@@ -485,16 +500,17 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
         A tuple of:
         - List of line_nums of new items added (sorted)
         - List of line_nums of pre-existing items whose metadata was updated (sorted)
+        - List of AgentLinkUpdate for agent state changes to broadcast
     """
     if not file_path.exists():
-        return [], []
+        return [], [], []
 
     stat = file_path.stat()
     file_mtime = stat.st_mtime
 
     # If mtime hasn't changed, nothing to do
     if session.mtime == file_mtime:
-        return [], []
+        return [], [], []
 
     with open(file_path, "r", encoding="utf-8") as f:
         # Seek to last known position
@@ -506,7 +522,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
             # Update mtime even if no new content (file may have been touched)
             session.mtime = file_mtime
             session.save(update_fields=["mtime"])
-            return [], []
+            return [], [], []
 
         # Split into lines (filter out empty lines)
         lines = [line for line in new_content.split("\n") if line.strip()]
@@ -519,7 +535,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
 
     if not lines:
         session.save(update_fields=["last_offset", "mtime"])
-        return [], []
+        return [], [], []
 
     # Create SessionItem objects for bulk insert
     items_to_create: list[tuple[SessionItem, dict]] = []
@@ -538,6 +554,9 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
     last_cwd: str | None = None
     last_cwd_git_branch: str | None = None
     last_model: str | None = None
+
+    # Track agent link updates to broadcast after processing
+    agent_link_updates: list[AgentLinkUpdate] = []
 
     # For subagents: track if we need to create the link between the agent and the parent session tool use
     subagent_needs_link = (
@@ -628,12 +647,13 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
 
                 if prompt:
                     cache_agent_prompt(session.parent_session_id, agent_id, prompt)
-                    if create_agent_link_from_subagent(
+                    agent_update = create_agent_link_from_subagent(
                         parent_session_id=session.parent_session_id,
                         agent_id=agent_id,
                         agent_prompt=prompt,
-                    ):
-
+                    )
+                    if agent_update:
+                        agent_link_updates.append(agent_update)
                         subagent_needs_link = False
 
         if item.kind == ItemKind.CUSTOM_TITLE:
@@ -678,9 +698,11 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
 
         # Tool result links (tool_result items are DEBUG_ONLY)
         if is_tool_result_item(parsed):
-            create_tool_result_link_live(session.id, item, parsed)
+            if update := create_tool_result_link_live(session.id, item, parsed):
+                agent_link_updates.append(update)
             # Also check for agent links (Task tool_result with agentId)
-            create_agent_link_from_tool_result(session.id, item, parsed)
+            if update := create_agent_link_from_tool_result(session.id, item, parsed):
+                agent_link_updates.append(update)
 
         # For parent sessions: check if this assistant message contains Task tool_use(s)
         # and try to link them to existing subagents (handles the race condition where
@@ -689,7 +711,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
         # the text and tool_use into separate lines, and tool_use-only lines have
         # no visible content so they're classified as CONTENT_ITEMS, not ASSISTANT_MESSAGE).
         if session.type == SessionType.SESSION and item.kind in (ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
-            create_agent_link_from_tool_use(session.id, item, parsed)
+            agent_link_updates.extend(create_agent_link_from_tool_use(session.id, item, parsed))
 
     # Check if project needs git_root resolution
     # (a session item resolved git info but project has no git_root yet)
@@ -822,7 +844,7 @@ def sync_session_items(session: Session, file_path: Path) -> tuple[list[int], li
         _update_parent_session_costs(session.parent_session_id)
 
     # Exclude new items from modified_line_nums
-    return sorted(new_line_nums), sorted(modified_line_nums - new_line_nums)
+    return sorted(new_line_nums), sorted(modified_line_nums - new_line_nums), agent_link_updates
 
 
 def _update_parent_session_costs(parent_session_id: str) -> None:

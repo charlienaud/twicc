@@ -373,6 +373,25 @@ export function useWebSocket() {
                 notifyProcessStateChange(msg, previousProcessState, route)
                 break
             }
+            case 'subagent_state_changed': {
+                // Update synthetic process state for a subagent.
+                // The parent session manages these states — no tab-open check needed.
+                const agentSessionId = msg.agent_session_id
+                const existingState = store.processStates[agentSessionId]
+
+                // Populate agent link cache (tool_use_id → agent_id mapping)
+                if (msg.tool_use_id && msg.parent_session_id) {
+                    store.setAgentLink(msg.parent_session_id, msg.tool_use_id, agentSessionId)
+                }
+
+                if (msg.is_done) {
+                    store.removeSyntheticProcessState(agentSessionId)
+                } else {
+                    const startedAtUnix = msg.started_at ? new Date(msg.started_at).getTime() / 1000 : null
+                    store.setSyntheticProcessState(agentSessionId, msg.project_id, startedAtUnix)
+                }
+                break
+            }
             case 'active_processes':
                 // Initialize process states from server on connection
                 store.setActiveProcesses(msg.processes)

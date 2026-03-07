@@ -1029,6 +1029,16 @@ export const useDataStore = defineStore('data', {
             delete this.localState.visualItemCache[sessionId]
             delete this.localState.optimisticMessages[sessionId]
             delete this.localState.agentLinks[sessionId]
+            // Remove synthetic process state if this is a subagent
+            if (this.processStates[sessionId]?.synthetic) {
+                delete this.processStates[sessionId]
+            }
+            // Remove synthetic process states for all subagents of this session
+            for (const [id, ps] of Object.entries(this.processStates)) {
+                if (ps.synthetic && this.sessions[id]?.parent_session_id === sessionId) {
+                    delete this.processStates[id]
+                }
+            }
         },
 
         /**
@@ -1109,6 +1119,7 @@ export const useDataStore = defineStore('data', {
                 let toolUseCompleted = false
                 for (let i = items.length - 1; i >= 0; i--) {
                     const item = items[i]
+                    if (item.kind === 'system') continue
                     if (item.kind !== 'assistant_message' && item.kind !== 'content_items') break
                     const parsed = getParsedContent(item)
                     if (!parsed) break
@@ -1540,6 +1551,88 @@ export const useDataStore = defineStore('data', {
          */
         clearAgentLinks(sessionId) {
             delete this.localState.agentLinks[sessionId]
+        },
+
+        // Subagent state actions
+
+        /**
+         * Set a synthetic process state for a subagent (assistant_turn).
+         * Does not overwrite real (non-synthetic) process states.
+         * Triggers recomputeVisualItems only if the session's items are loaded
+         * and the assistant_turn status actually changed.
+         *
+         * @param {string} agentSessionId - The subagent session ID
+         * @param {string} projectId - The project ID
+         * @param {number|null} startedAtUnix - Unix timestamp (seconds) of when the agent started
+         */
+        setSyntheticProcessState(agentSessionId, projectId, startedAtUnix) {
+            // Don't overwrite real process states (from ProcessManager)
+            if (this.processStates[agentSessionId] && !this.processStates[agentSessionId].synthetic) {
+                return
+            }
+            const wasAssistantTurn = this.processStates[agentSessionId]?.state === PROCESS_STATE.ASSISTANT_TURN
+            this.processStates[agentSessionId] = {
+                state: PROCESS_STATE.ASSISTANT_TURN,
+                project_id: projectId,
+                started_at: startedAtUnix,
+                state_changed_at: startedAtUnix,
+                memory: null,
+                error: null,
+                pending_request: null,
+                session_title: null,
+                project_name: null,
+                synthetic: true,
+            }
+            if (!wasAssistantTurn && this.sessionItems[agentSessionId]) {
+                this.recomputeVisualItems(agentSessionId)
+            }
+        },
+
+        /**
+         * Remove a synthetic process state for a subagent.
+         * Only removes if the process state is synthetic (not a real process).
+         * Triggers recomputeVisualItems only if the session's items are loaded.
+         *
+         * @param {string} agentSessionId - The subagent session ID
+         */
+        removeSyntheticProcessState(agentSessionId) {
+            const ps = this.processStates[agentSessionId]
+            if (!ps?.synthetic) return
+            const wasAssistantTurn = ps.state === PROCESS_STATE.ASSISTANT_TURN
+            delete this.processStates[agentSessionId]
+            if (wasAssistantTurn && this.sessionItems[agentSessionId]) {
+                this.recomputeVisualItems(agentSessionId)
+            }
+        },
+
+        /**
+         * Fetch and set synthetic process states for all subagents of a session.
+         * Called at session load time when the session has a process in assistant_turn.
+         * Creates synthetic processState entries for agents that are not done.
+         *
+         * @param {string} projectId - The project ID
+         * @param {string} sessionId - The parent session ID
+         */
+        async fetchSubagentsState(projectId, sessionId) {
+            try {
+                const url = `/api/projects/${projectId}/sessions/${sessionId}/subagents/`
+                const response = await apiFetch(url)
+                if (!response.ok) return
+
+                const agents = await response.json()
+
+                for (const agent of agents) {
+                    // Populate agent link cache (tool_use_id → agent_id mapping)
+                    this.setAgentLink(sessionId, agent.tool_use_id, agent.agent_id)
+
+                    if (!agent.is_done) {
+                        const startedAtUnix = agent.started_at ? new Date(agent.started_at).getTime() / 1000 : null
+                        this.setSyntheticProcessState(agent.agent_id, projectId, startedAtUnix)
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to fetch subagents state:', error)
+            }
         },
 
         // Process state actions

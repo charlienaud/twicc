@@ -392,6 +392,13 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession]) => {
     const isFirstLoad = !store.areSessionItemsFetched(newSessionId)
     if (isFirstLoad) {
         await loadSessionData(lastLine)
+
+        // For parent sessions, fetch all subagent states.
+        // Populates the agent link cache (tool_use_id → agent_id) for View Agent buttons,
+        // and creates synthetic process states for agents still running.
+        if (!props.parentSessionId) {
+            store.fetchSubagentsState(props.projectId, newSessionId)
+        }
     }
 
     // Skip DOM-manipulating scroll when inactive (KeepAlive deactivated)

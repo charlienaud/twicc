@@ -158,10 +158,10 @@ function formatMemory(bytes) {
 // Only assistant_turn should animate
 const animateStates = ['assistant_turn']
 
-// Check if process can be stopped (any state except dead)
+// Check if process can be stopped (any state except dead, and not a synthetic process state)
 const canStopProcess = computed(() => {
-    const state = processState.value?.state
-    return state && state !== PROCESS_STATE.DEAD
+    const ps = processState.value
+    return ps && !ps.synthetic && ps.state && ps.state !== PROCESS_STATE.DEAD
 })
 
 /**

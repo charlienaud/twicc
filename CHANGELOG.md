@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Syntax-highlighted code display for Read tool results
 - Show URL for WebFetch and search query for WebSearch/ToolSearch in tool use summaries
 - Include file attachments in optimistic user messages for instant display
+- Live agent status: show working indicator, duration, and action label (e.g. "is bashing") in agent tabs, with a pulsing robot icon and duration tooltip on the "View Agent" button
 
 ### Changed
 

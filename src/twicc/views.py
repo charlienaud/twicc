@@ -512,33 +512,34 @@ def tool_results(request, project_id, session_id, line_num, tool_id, parent_sess
     return JsonResponse({"results": results})
 
 
-def tool_agent_id(request, project_id, session_id, line_num, tool_id):
-    """GET /api/projects/<id>/sessions/<session_id>/items/<line_num>/tool-agent-id/<tool_id>/
+def subagents_state(request, project_id, session_id):
+    """GET /api/projects/<id>/sessions/<session_id>/subagents/
 
-    Returns the agent_id for a Task tool_use that spawned a subagent.
-    Uses AgentLink to find the agent link.
-
-    Only available for regular sessions (not subagents), since subagents cannot spawn subagents.
+    Returns the state of all subagents for a session as a flat list.
+    Each entry contains agent_id, tool_use_id, is_done, is_background, started_at, completed_at.
     """
     try:
         session = Session.objects.get(id=session_id, project_id=project_id)
     except Session.DoesNotExist:
         raise Http404("Session not found")
 
-    # Reject subagents - they cannot spawn subagents
+    # Reject if the session is itself a subagent
     if session.parent_session_id is not None:
         raise Http404("Session not found")
 
-    # Find the agent link for this tool_use
-    link = AgentLink.objects.filter(
-        session=session,
-        tool_use_id=tool_id,
-    ).first()
-
-    if link:
-        return JsonResponse({"agent_id": link.agent_id})
-    else:
-        return JsonResponse({"agent_id": None})
+    links = AgentLink.objects.filter(session=session).order_by("id")
+    result = [
+        {
+            "agent_id": link.agent_id,
+            "tool_use_id": link.tool_use_id,
+            "is_done": link.is_done,
+            "is_background": link.is_background,
+            "started_at": link.started_at.isoformat() if link.started_at else None,
+            "completed_at": link.completed_at.isoformat() if link.completed_at else None,
+        }
+        for link in links
+    ]
+    return JsonResponse(result, safe=False)
 
 
 def directory_tree(request, project_id, session_id=None):

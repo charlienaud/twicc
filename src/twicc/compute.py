@@ -30,6 +30,17 @@ from twicc.core.pricing import (
     extract_model_info,
 )
 
+class AgentLinkUpdate(NamedTuple):
+    """Describes an AgentLink change to broadcast to the frontend."""
+    parent_session_id: str
+    agent_id: str
+    tool_use_id: str
+    is_done: bool
+    is_background: bool
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
 # Tool names that spawn subagent sessions (Task is the legacy name, Agent is the new one)
 AGENT_TOOL_NAMES = frozenset({'Task', 'Agent'})
 
@@ -748,23 +759,27 @@ def is_tool_result_item(parsed_json: dict) -> bool:
     return any(isinstance(item, dict) and item.get('type') == 'tool_result' for item in content)
 
 
-def get_task_tool_uses(parsed_json: dict) -> list[str]:
+def get_task_tool_uses(parsed_json: dict) -> list[tuple[str, bool]]:
     """
-    Extract tool_use IDs from agent tool calls in an assistant message.
+    Extract tool_use IDs and background flag from agent tool calls in an assistant message.
 
-    Returns a list of tool_use IDs for tool_use items where name is "Task" or "Agent".
+    Returns a list of (tool_use_id, is_background) tuples for tool_use items
+    where name is "Task" or "Agent".
     """
     content = get_message_content_list(parsed_json, "assistant")
     if content is None:
         return []
-    return [
-        item['id']
-        for item in content
-        if isinstance(item, dict)
-        and item.get('type') == 'tool_use'
-        and item.get('name') in AGENT_TOOL_NAMES
-        and item.get('id')
-    ]
+    results = []
+    for item in content:
+        if (
+            isinstance(item, dict)
+            and item.get('type') == 'tool_use'
+            and item.get('name') in AGENT_TOOL_NAMES
+            and item.get('id')
+        ):
+            is_background = bool(isinstance(item.get('input'), dict) and item['input'].get('run_in_background'))
+            results.append((item['id'], is_background))
+    return results
 
 
 def get_tool_result_agent_info(parsed_json: dict) -> tuple[str, str] | None:
@@ -1390,8 +1405,10 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
 
     # Map tool_use_id → line_num of the item containing the tool_use
     tool_use_map: dict[str, int] = {}
-    # Map tool_use_id → line_num for Task tool_uses (to link to agents)
-    task_tool_use_map: dict[str, int] = {}
+    # Map tool_use_id → (line_num, is_background, timestamp) for Task tool_uses (to link to agents)
+    task_tool_use_map: dict[str, tuple[int, bool, datetime | None]] = {}
+    # Map tool_use_id → latest tool_result timestamp (for agent completed_at)
+    tool_result_timestamps: dict[str, datetime] = {}
 
     # Track if we've set the initial title from first user message
     initial_title_set = False
@@ -1504,9 +1521,9 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             tool_use_map[tu_id] = item.line_num
 
         # Track Task tool_use IDs (for agent links)
-        task_tool_use_ids = get_task_tool_uses(parsed)
-        for tu_id in task_tool_use_ids:
-            task_tool_use_map[tu_id] = item.line_num
+        task_tool_use_entries = get_task_tool_uses(parsed)
+        for tu_id, is_background in task_tool_use_entries:
+            task_tool_use_map[tu_id] = (item.line_num, is_background, item.timestamp)
 
         # Check if this is a tool_result and create link
         tool_result_ref = get_tool_result_id(parsed)
@@ -1517,17 +1534,22 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
                 'tool_result_line_num': item.line_num,
                 'tool_use_id': tool_result_ref,
             })
+            # Track the latest tool_result timestamp per tool_use_id (for agent completed_at)
+            if item.timestamp:
+                tool_result_timestamps[tool_result_ref] = item.timestamp
 
         # Check if this is a Task tool_result with agentId and create agent link
-        agent_info = get_tool_result_agent_info(parsed)
-        if agent_info:
+        if agent_info := get_tool_result_agent_info(parsed):
             tu_id, agent_id = agent_info
             if tu_id in task_tool_use_map:
+                line_num, is_background, started_at = task_tool_use_map[tu_id]
                 agent_links_to_create.append({
                     'session_id': session_id,
-                    'tool_use_line_num': task_tool_use_map[tu_id],
+                    'tool_use_line_num': line_num,
                     'tool_use_id': tu_id,
                     'agent_id': agent_id,
+                    'is_background': is_background,
+                    'started_at': started_at,
                 })
                 # Remove from map to avoid duplicate links
                 del task_tool_use_map[tu_id]
@@ -1579,6 +1601,19 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     flush_items(items_to_update)
     flush_tool_result_links(tool_result_links_to_create)
     flush_agent_links(agent_links_to_create)
+
+    # Compute result_count and completed_at for each agent link from tool_result_links
+    if all_agent_links and all_tool_result_links:
+        from collections import Counter
+        result_counts = Counter(d['tool_use_id'] for d in all_tool_result_links)
+        for agent_link in all_agent_links:
+            tu_id = agent_link['tool_use_id']
+            count = result_counts.get(tu_id, 0)
+            agent_link['result_count'] = count
+            is_background = agent_link.get('is_background', False)
+            is_done = count >= (2 if is_background else 1)
+            if is_done and tu_id in tool_result_timestamps:
+                agent_link['completed_at'] = tool_result_timestamps[tu_id]
 
     # user_message_count is already tracked as a simple counter (incremented for each USER_MESSAGE)
 
@@ -1665,18 +1700,20 @@ def _find_open_group_head(session_id: str, before_line_num: int) -> int | None:
     return None
 
 
-def create_tool_result_link_live(session_id: str, item: SessionItem, parsed_json: dict) -> None:
+def create_tool_result_link_live(session_id: str, item: SessionItem, parsed_json: dict) -> AgentLinkUpdate | None:
     """
     Create a ToolResultLink for a tool_result item during live sync.
 
     Searches the session for the item containing the matching tool_use
     and creates the link entry.
+
+    Returns an AgentLinkUpdate if an associated AgentLink was modified, None otherwise.
     """
     from twicc.core.models import ToolResultLink
 
     tool_use_id = get_tool_result_id(parsed_json)
     if not tool_use_id:
-        return
+        return None
 
     # Find candidates by text search (LIKE), ordered most recent first.
     # The tool_use_id string could appear in text content (e.g. assistant mentioning it),
@@ -1694,37 +1731,76 @@ def create_tool_result_link_live(session_id: str, item: SessionItem, parsed_json
             continue
 
         if tool_use_id in get_tool_use_ids(candidate_parsed):
-            ToolResultLink.objects.get_or_create(
+            _, created = ToolResultLink.objects.get_or_create(
                 session_id=session_id,
                 tool_use_line_num=candidate.line_num,
                 tool_result_line_num=item.line_num,
                 tool_use_id=tool_use_id,
             )
-            return
+            if created:
+                return _increment_agent_link_result_count(session_id, tool_use_id, item.timestamp)
+            return None
 
 
-def create_agent_link_from_tool_result(session_id: str, item: SessionItem, parsed_json: dict) -> None:
+def _increment_agent_link_result_count(session_id: str, tool_use_id: str, result_timestamp: datetime | None) -> AgentLinkUpdate | None:
+    """Increment result_count on the AgentLink matching this tool_use_id, if any.
+
+    Also sets completed_at when the agent transitions to done (result_count reaches
+    the required threshold: 1 for non-background, 2 for background agents).
+
+    Returns an AgentLinkUpdate if the link was modified, None otherwise.
+    """
+    from twicc.core.models import AgentLink
+
+    link = AgentLink.objects.filter(
+        session_id=session_id,
+        tool_use_id=tool_use_id,
+    ).first()
+    if not link:
+        return None
+
+    new_count = link.result_count + 1
+    link.result_count = new_count
+    update_fields = ['result_count']
+
+    # Set completed_at when the agent transitions to done
+    required = 2 if link.is_background else 1
+    if new_count >= required and result_timestamp and not link.completed_at:
+        link.completed_at = result_timestamp
+        update_fields.append('completed_at')
+
+    link.save(update_fields=update_fields)
+
+    return AgentLinkUpdate(
+        parent_session_id=session_id,
+        agent_id=link.agent_id,
+        tool_use_id=link.tool_use_id,
+        is_done=link.is_done,
+        is_background=link.is_background,
+        started_at=link.started_at,
+        completed_at=link.completed_at,
+    )
+
+
+def create_agent_link_from_tool_result(session_id: str, item: SessionItem, parsed_json: dict) -> AgentLinkUpdate | None:
     """
     Create an AgentLink for a Task tool_result with agentId during live sync.
 
     When a tool_result arrives with an agentId in toolUseResult, this function
     finds the corresponding Task tool_use and creates an agent link.
 
-    Args:
-        session_id: The session ID
-        item: The SessionItem containing the tool_result
-        parsed_json: The parsed JSON content of the tool_result item
+    Returns an AgentLinkUpdate if a link was created, None otherwise.
     """
     from twicc.core.models import AgentLink
 
     agent_info = get_tool_result_agent_info(parsed_json)
     if not agent_info:
-        return
+        return None
 
     tool_use_id, agent_id = agent_info
 
     if is_agent_link_done(session_id, agent_id):
-        return
+        return None
 
     # Check if we already have this agent link
     if AgentLink.objects.filter(
@@ -1732,7 +1808,7 @@ def create_agent_link_from_tool_result(session_id: str, item: SessionItem, parse
         agent_id=agent_id,
     ).exists():
         mark_agent_link_done(session_id, agent_id)
-        return
+        return None
 
     # Find the Task tool_use by searching for the tool_use_id
     candidates = SessionItem.objects.filter(
@@ -1748,29 +1824,42 @@ def create_agent_link_from_tool_result(session_id: str, item: SessionItem, parse
             continue
 
         # Check if this candidate has a Task tool_use with this ID
-        if tool_use_id in get_task_tool_uses(candidate_parsed):
+        for tu_id, is_background in get_task_tool_uses(candidate_parsed):
+            if tu_id != tool_use_id:
+                continue
             try:
-                AgentLink.objects.get_or_create(
+                obj, created = AgentLink.objects.get_or_create(
                     session_id=session_id,
                     tool_use_line_num=candidate.line_num,
                     tool_use_id=tool_use_id,
-                    defaults={"agent_id": agent_id},
+                    defaults={"agent_id": agent_id, "is_background": is_background, "started_at": candidate.timestamp},
                 )
                 mark_agent_link_done(session_id, agent_id)
+                if created:
+                    return AgentLinkUpdate(
+                        parent_session_id=session_id,
+                        agent_id=agent_id,
+                        tool_use_id=tool_use_id,
+                        is_done=obj.is_done,
+                        is_background=is_background,
+                        started_at=candidate.timestamp,
+                        completed_at=None,
+                    )
             except MultipleObjectsReturned:  # defensive mode
                 pass
-            return
+            return None
+    return None
 
 
-def _extract_task_tool_use_prompts(content: list) -> list[tuple[str, str]]:
+def _extract_task_tool_use_prompts(content: list) -> list[tuple[str, str, bool]]:
     """
-    Extract (tool_use_id, prompt) pairs from agent tool_use items in content.
+    Extract (tool_use_id, prompt, is_background) triples from agent tool_use items in content.
 
     Args:
         content: The content array from an assistant message
 
     Returns:
-        List of (tool_use_id, prompt) tuples for all agent tool_uses found (Task or Agent)
+        List of (tool_use_id, prompt, is_background) tuples for all agent tool_uses found (Task or Agent)
     """
     results = []
     for item in content:
@@ -1783,7 +1872,8 @@ def _extract_task_tool_use_prompts(content: list) -> list[tuple[str, str]]:
         if isinstance(inputs, dict) and tu_id:
             prompt = inputs.get('prompt')
             if isinstance(prompt, str):
-                results.append((tu_id, prompt))
+                is_background = bool(inputs.get('run_in_background'))
+                results.append((tu_id, prompt, is_background))
     return results
 
 
@@ -1821,7 +1911,7 @@ def create_agent_link_from_subagent(
     parent_session_id: str,
     agent_id: str,
     agent_prompt: str,
-) -> bool:
+) -> AgentLinkUpdate | None:
     """
     Create an AgentLink for a subagent by matching its prompt to a Task tool_use.
 
@@ -1830,18 +1920,12 @@ def create_agent_link_from_subagent(
 
     This allows linking the tool_use to its agent before the tool_result arrives.
 
-    Args:
-        parent_session_id: The parent session ID
-        agent_id: The agent's ID (e.g., "a9785d3")
-        agent_prompt: The prompt from the agent's first user message
-
-    Returns:
-        True if the link was created, False otherwise
+    Returns an AgentLinkUpdate if the link was created, None otherwise.
     """
     from twicc.core.models import AgentLink
 
     if is_agent_link_done(parent_session_id, agent_id):
-        return False
+        return None
 
     # Check if we already have this agent link
     if AgentLink.objects.filter(
@@ -1849,7 +1933,7 @@ def create_agent_link_from_subagent(
         agent_id=agent_id,
     ).exists():
         mark_agent_link_done(parent_session_id, agent_id)
-        return False
+        return None
 
     agent_prompt = agent_prompt.strip()
 
@@ -1871,30 +1955,38 @@ def create_agent_link_from_subagent(
         if content is None:
             continue
 
-        # Extract (tool_use_id, prompt) pairs from Task tool_uses
-        for tu_id, prompt in _extract_task_tool_use_prompts(content):
+        # Extract (tool_use_id, prompt, is_background) triples from Task tool_uses
+        for tu_id, prompt, is_background in _extract_task_tool_use_prompts(content):
             if prompt.strip() == agent_prompt:
                 try:
                     obj, created = AgentLink.objects.get_or_create(
                         session_id=parent_session_id,
                         tool_use_line_num=candidate.line_num,
                         tool_use_id=tu_id,
-                        defaults={"agent_id": agent_id},
+                        defaults={"agent_id": agent_id, "is_background": is_background, "started_at": candidate.timestamp},
                     )
                     if created:
                         mark_agent_link_done(parent_session_id, agent_id)
-                        return True
+                        return AgentLinkUpdate(
+                            parent_session_id=parent_session_id,
+                            agent_id=agent_id,
+                            tool_use_id=tu_id,
+                            is_done=False,
+                            is_background=is_background,
+                            started_at=candidate.timestamp,
+                            completed_at=None,
+                        )
                 except MultipleObjectsReturned:  # defensive mode
                     continue
 
-    return False
+    return None
 
 
 def create_agent_link_from_tool_use(
     session_id: str,
     item: SessionItem,
     parsed_json: dict,
-) -> None:
+) -> list[AgentLinkUpdate]:
     """
     Create AgentLink(s) for Task tool_use(s) by matching against existing subagents.
 
@@ -1903,34 +1995,24 @@ def create_agent_link_from_tool_use(
     This handles the race condition where the subagent file is synced before the parent
     session's Task tool_use item exists: when the parent catches up, we create the link here.
 
-    Args:
-        session_id: The parent session ID
-        item: The SessionItem containing the assistant message with Task tool_use(s)
-        parsed_json: The parsed JSON content of the item
+    Returns a list of AgentLinkUpdates for each link created.
     """
     from twicc.core.models import AgentLink
 
     # Extract assistant message content
     content = get_message_content_list(parsed_json, "assistant")
     if content is None:
-        return
+        return []
 
-    # Collect all (tool_use_id, prompt) pairs from agent tool_uses in this message
-    task_prompts: list[tuple[str, str]] = []
-    for content_item in content:
-        if not isinstance(content_item, dict):
-            continue
-        if content_item.get('type') != 'tool_use' or content_item.get('name') not in AGENT_TOOL_NAMES:
-            continue
-        tu_id = content_item.get('id')
-        inputs = content_item.get('input', {})
-        if isinstance(inputs, dict) and tu_id:
-            prompt = inputs.get('prompt')
-            if isinstance(prompt, str):
-                task_prompts.append((tu_id, prompt.strip()))
+    # Collect all (tool_use_id, prompt, is_background) triples from agent tool_uses in this message
+    task_prompts = _extract_task_tool_use_prompts(content)
+    # Normalize prompts for matching
+    task_prompts = [(tu_id, prompt.strip(), is_bg) for tu_id, prompt, is_bg in task_prompts]
 
     if not task_prompts:
-        return
+        return []
+
+    updates: list[AgentLinkUpdate] = []
 
     # Get all subagents for this session that don't have a link yet
     subagents = Session.objects.filter(
@@ -1972,20 +2054,31 @@ def create_agent_link_from_tool_use(
             cache_agent_prompt(session_id, subagent.id, subagent_prompt)
 
         # Check if the subagent's prompt matches any Task tool_use prompt
-        for tu_id, prompt in task_prompts:
+        for tu_id, prompt, is_background in task_prompts:
             if prompt == subagent_prompt:
                 try:
                     _, created = AgentLink.objects.get_or_create(
                         session_id=session_id,
                         tool_use_line_num=item.line_num,
                         tool_use_id=tu_id,
-                        defaults={"agent_id": subagent.id},
+                        defaults={"agent_id": subagent.id, "is_background": is_background, "started_at": item.timestamp},
                     )
                     if created:
                         mark_agent_link_done(session_id, subagent.id)
+                        updates.append(AgentLinkUpdate(
+                            parent_session_id=session_id,
+                            agent_id=subagent.id,
+                            tool_use_id=tu_id,
+                            is_done=False,
+                            is_background=is_background,
+                            started_at=item.timestamp,
+                            completed_at=None,
+                        ))
                 except MultipleObjectsReturned:
                     pass
                 break
+
+    return updates
 
 
 def compute_item_metadata_live(session_id: str, item: SessionItem, parsed_json: dict) -> set[int]:

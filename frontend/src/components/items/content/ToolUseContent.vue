@@ -5,10 +5,12 @@ import { useDataStore } from '../../../stores/data'
 import { apiFetch } from '../../../utils/api'
 import { getIconUrl, getFileIconId } from '../../../utils/fileIcons'
 import { getLanguageFromPath } from '../../../utils/languages'
-import { AGENT_TOOL_NAMES } from '../../../constants'
+import { AGENT_TOOL_NAMES, PROCESS_STATE } from '../../../constants'
 import { getTodoDescription, isValidTodos } from '../../../utils/todoList'
 import JsonHumanView from '../../JsonHumanView.vue'
 import MarkdownContent from '../../MarkdownContent.vue'
+import AppTooltip from '../../AppTooltip.vue'
+import ProcessDuration from '../../ProcessDuration.vue'
 import TodoContent from './TodoContent.vue'
 
 const route = useRoute()
@@ -197,7 +199,6 @@ function onToolUseOpen() {
 // Cleanup on unmount (e.g., when changing session, toggling groups)
 onUnmounted(() => {
     stopPolling()
-    stopAgentPolling()
 })
 
 // KeepAlive active state (provided by SessionView)
@@ -205,7 +206,6 @@ const sessionActive = inject('sessionActive', ref(true))
 
 // Track whether polling was suspended by deactivation (to resume on reactivation)
 let resultPollingPaused = false
-let agentPollingPausedAttempts = 0 // 0 = not paused, >0 = paused with this many attempts done
 
 watch(sessionActive, (active) => {
     if (active) {
@@ -217,15 +217,6 @@ watch(sessionActive, (active) => {
                 startPolling()
             }
         }
-        if (agentPollingPausedAttempts > 0) {
-            const savedAttempts = agentPollingPausedAttempts
-            agentPollingPausedAttempts = 0
-            // Resume only if agent link was not found and max attempts not reached
-            if (agentLinkState.value === 'retrying' && savedAttempts < AGENT_POLLING_MAX_ATTEMPTS) {
-                agentPollingAttempts.value = savedAttempts
-                agentPollingIntervalId.value = setInterval(fetchAgentLink, AGENT_POLLING_DELAY_MS)
-            }
-        }
     } else {
         // Deactivated: pause active polling intervals without resetting state
         if (pollingIntervalId.value) {
@@ -233,16 +224,6 @@ watch(sessionActive, (active) => {
             clearInterval(pollingIntervalId.value)
             pollingIntervalId.value = null
             // Keep isPolling.value = true so the UI still shows "checking again shortly..."
-        }
-        if (agentPollingIntervalId.value) {
-            agentPollingPausedAttempts = agentPollingAttempts.value
-            clearInterval(agentPollingIntervalId.value)
-            agentPollingIntervalId.value = null
-            // Abort any in-flight agent request
-            if (agentLinkAbortController.value) {
-                agentLinkAbortController.value.abort()
-                agentLinkAbortController.value = null
-            }
         }
         // Abort any in-flight result request
         if (abortController.value) {
@@ -468,125 +449,33 @@ const taskDisplayName = computed(() => {
     return { name: capitalize(sat), namespace: null }
 })
 
-// Agent link polling configuration
-const AGENT_POLLING_DELAY_MS = 3000
-const AGENT_POLLING_MAX_ATTEMPTS = 10
+// Agent link: reactive lookup from the store cache.
+// The cache is populated by fetchSubagentsState (on session load) and
+// by the WS subagent_state_changed handler — no polling needed.
+const agentId = computed(() => dataStore.getAgentLink(props.sessionId, props.toolId))
 
-// Agent link state: 'idle' | 'loading' | 'retrying' | 'found'
-const agentLinkState = ref('idle')
-const agentLinkAbortController = ref(null)
-const agentPollingIntervalId = ref(null)
-const agentPollingAttempts = ref(0)
+// Is the agent currently running? (has a synthetic process state in assistant_turn)
+const agentProcessState = computed(() => {
+    if (!agentId.value) return null
+    const ps = dataStore.processStates[agentId.value]
+    return (ps?.synthetic && ps.state === PROCESS_STATE.ASSISTANT_TURN) ? ps : null
+})
+const isAgentRunning = computed(() => !!agentProcessState.value)
 
-/**
- * Fetch the agent ID for this Task tool_use.
- * If found, navigates to the subagent tab.
- * If not found and not yet polling, starts polling.
- * If max attempts reached, stops polling and resets to idle.
- */
-async function fetchAgentLink() {
-    // Only for regular sessions (not subagents)
-    if (props.parentSessionId) return
-
-    // Check cache first (only caches found agents, not nulls)
-    const cached = dataStore.getAgentLink(props.sessionId, props.toolId)
-    if (cached) {
-        // Found in cache, navigate
-        stopAgentPolling()
-        navigateToSubagent(cached)
-        return
-    }
-
-    // Don't set loading state if we're polling (to avoid flicker)
-    if (!agentPollingIntervalId.value) {
-        agentLinkState.value = 'loading'
-    }
-
-    agentLinkAbortController.value = new AbortController()
-
-    try {
-        const url = `/api/projects/${props.projectId}/sessions/${props.sessionId}/items/${props.lineNum}/tool-agent-id/${props.toolId}/`
-        const response = await apiFetch(url, { signal: agentLinkAbortController.value.signal })
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`)
-        }
-
-        const data = await response.json()
-        const agentId = data.agent_id
-
-        if (agentId) {
-            // Found! Cache it and navigate
-            dataStore.setAgentLink(props.sessionId, props.toolId, agentId)
-            agentLinkState.value = 'found'
-            stopAgentPolling()
-            navigateToSubagent(agentId)
-        } else {
-            // Not found - start or continue polling
-            if (!agentPollingIntervalId.value) {
-                startAgentPolling()
-            } else {
-                // Check if max attempts reached
-                agentPollingAttempts.value++
-                if (agentPollingAttempts.value >= AGENT_POLLING_MAX_ATTEMPTS) {
-                    stopAgentPolling()
-                    agentLinkState.value = 'idle'
-                }
-            }
-        }
-    } catch (err) {
-        if (err.name === 'AbortError') return
-        console.error('Failed to fetch agent link:', err)
-        // On error, stop polling and reset to idle
-        stopAgentPolling()
-        agentLinkState.value = 'idle'
-    } finally {
-        agentLinkAbortController.value = null
-    }
-}
-
-/**
- * Start polling for agent link.
- */
-function startAgentPolling() {
-    if (agentPollingIntervalId.value) return // Already polling
-    agentLinkState.value = 'retrying'
-    agentPollingAttempts.value = 1 // First attempt already done
-    agentPollingIntervalId.value = setInterval(fetchAgentLink, AGENT_POLLING_DELAY_MS)
-}
-
-/**
- * Stop polling for agent link.
- */
-function stopAgentPolling() {
-    if (agentLinkAbortController.value) {
-        agentLinkAbortController.value.abort()
-        agentLinkAbortController.value = null
-    }
-    if (agentPollingIntervalId.value) {
-        clearInterval(agentPollingIntervalId.value)
-        agentPollingIntervalId.value = null
-    }
-    agentPollingAttempts.value = 0
-}
-
-/**
- * Handle click on View Agent button.
- */
-function handleViewAgent() {
-    fetchAgentLink()
-}
+// Unique ID for the View Agent button (for tooltip targeting)
+const viewAgentButtonId = computed(() => `view-agent-${props.toolId}`)
 
 /**
  * Navigate to the subagent tab.
  */
-function navigateToSubagent(agentId) {
+function navigateToSubagent() {
+    if (!agentId.value) return
     router.push({
         name: isAllProjectsMode.value ? 'projects-session-subagent' : 'session-subagent',
         params: {
             projectId: props.projectId,
             sessionId: props.sessionId,
-            subagentId: agentId
+            subagentId: agentId.value
         }
     })
 }
@@ -656,18 +545,25 @@ function navigateToSubagent(agentId) {
                     </template>
                 </template>
             </span>
-            <!-- View Agent button for Task tool_use (only in regular sessions) -->
+            <!-- View Agent indicator for Task tool_use (only in regular sessions) -->
             <template v-if="isTask && !parentSessionId">
+                <!-- Agent not yet started: spinner -->
+                <wa-spinner v-if="!agentId" class="agent-starting-spinner"></wa-spinner>
+                <!-- Agent started: View Agent button (with pulsing robot if still running) -->
                 <wa-button
+                    v-else
+                    :id="viewAgentButtonId"
                     size="small"
                     variant="brand"
                     appearance="outlined"
-                    :loading="agentLinkState === 'loading'"
-                    :disabled="agentLinkState === 'retrying'"
-                    @click.stop="handleViewAgent"
+                    @click.stop="navigateToSubagent"
                 >
-                    {{ agentLinkState === 'retrying' ? 'Retrying...' : 'View Agent' }}
+                    <wa-icon v-if="isAgentRunning" slot="start" name="robot" class="agent-running-icon"></wa-icon>
+                    View Agent
                 </wa-button>
+                <AppTooltip v-if="isAgentRunning && agentProcessState.state_changed_at" :for="viewAgentButtonId">
+                    Agent running for <ProcessDuration :state-changed-at="agentProcessState.state_changed_at" />
+                </AppTooltip>
             </template>
         </span>
         <template v-if="isOpen">
@@ -730,10 +626,17 @@ wa-details.with-right-part {
         gap: var(--wa-space-m);
         width: 100%;
 
-        wa-button {
+        wa-button, .agent-starting-spinner {
             margin-block: -1em;
         }
-        & > :not(wa-button):last-child {
+        .agent-starting-spinner {
+            font-size: 1.2em;
+            --indicator-color: var(--wa-color-brand-600);
+        }
+        .agent-running-icon {
+            animation: pulse 1s ease-in-out infinite;
+        }
+        & > :not(wa-button, .agent-starting-spinner):last-child {
             margin-right: var(--spacing);
         }
     }
@@ -859,5 +762,10 @@ wa-details {
 
 .todo-icon-completed {
     color: var(--wa-color-success-60);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
 }
 </style>
