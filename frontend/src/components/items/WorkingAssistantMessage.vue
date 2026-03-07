@@ -114,7 +114,7 @@ onUnmounted(() => {
 <template>
     <div class="working-assistant-message text-content">
         <ProcessIndicator :state="processState" size="small" :animate-states="['starting', 'assistant_turn']" />
-        <span>Claude is {{ label || displayedAction || 'working' }}...</span>
+        <span>Claude is {{ label || displayedAction || 'thinking' }}...</span>
     </div>
 </template>
 
