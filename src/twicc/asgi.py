@@ -453,6 +453,13 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             if update_msg:
                 await self.send_json(update_msg)
 
+        # Send Claude Code status if currently not operational
+        if self._should_send("claude_status"):
+            from twicc.statuspage_task import get_statuspage_message_for_connection
+            status_msg = get_statuspage_message_for_connection()
+            if status_msg:
+                await self.send_json(status_msg)
+
     async def disconnect(self, close_code):
         """Remove from the updates group on disconnect."""
         await self.channel_layer.group_discard("updates", self.channel_name)

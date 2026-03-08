@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Auto-reload frontend when backend version changes
 - Notify users when a new version is available on PyPI
+- Monitor Claude Code status via status.claude.com and show toast notifications on outages
 
 ## [1.1.0] - 2026-03-08
 

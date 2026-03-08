@@ -58,6 +58,7 @@ from twicc.pricing_task import run_initial_price_sync, start_price_sync_task, st
 from twicc.sessions_watcher import start_watcher, stop_watcher  # noqa: E402
 from twicc.startup_progress import broadcast_startup_progress  # noqa: E402
 from twicc.usage_task import start_usage_sync_task, stop_usage_sync_task
+from twicc.statuspage_task import start_statuspage_task, stop_statuspage_task  # noqa: E402
 from twicc.version_check_task import start_version_check_task, stop_version_check_task  # noqa: E402
 
 
@@ -208,6 +209,7 @@ async def run_server(port: int):
     orch_task = asyncio.create_task(orchestrator_task())
     usage_sync_task = asyncio.create_task(start_usage_sync_task())
     version_check_task = asyncio.create_task(start_version_check_task())
+    statuspage_task = asyncio.create_task(start_statuspage_task())
 
     # Configure uvicorn
     # log_config=None prevents Uvicorn from installing its own StreamHandlers;
@@ -276,6 +278,11 @@ async def run_server(port: int):
         logger.info("Stopping version check task...")
         stop_version_check_task()
         await _cancel_task(version_check_task, "Version check task")
+
+        # Clean shutdown of statuspage task
+        logger.info("Stopping statuspage task...")
+        stop_statuspage_task()
+        await _cancel_task(statuspage_task, "Statuspage task")
 
         # Clean shutdown of Claude processes (also stops the internal timeout monitor)
         # This gracefully terminates any active Claude SDK processes

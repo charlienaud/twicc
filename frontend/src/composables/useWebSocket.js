@@ -239,6 +239,60 @@ function notifyProcessStateChange(msg, previousState, route) {
 }
 
 /**
+ * Status-specific messages for Claude Code outage notifications.
+ * Keys are the component status values from the Atlassian Statuspage API.
+ */
+const CLAUDE_STATUS_MESSAGES = {
+    degraded_performance: {
+        type: 'warning',
+        message: 'Claude Code is currently experiencing degraded performance on Anthropic\'s side',
+    },
+    partial_outage: {
+        type: 'warning',
+        message: 'Claude Code is currently experiencing a partial outage on Anthropic\'s side',
+    },
+    major_outage: {
+        type: 'error',
+        message: 'Claude Code is currently experiencing a major outage on Anthropic\'s side',
+    },
+    under_maintenance: {
+        type: 'info',
+        message: 'Claude Code is currently under maintenance on Anthropic\'s side',
+    },
+}
+
+/**
+ * Handle claude_status message from the backend.
+ * Shows a persistent toast when Claude Code is not operational,
+ * or a resolution toast when it returns to operational.
+ */
+function handleClaudeStatus(msg) {
+    const { status } = msg
+    if (!status) return
+
+    const statusLink = '<a href="https://status.claude.com/" target="_blank" rel="noopener" style="color: inherit; text-decoration: underline;">status.claude.com</a>'
+
+    if (status === 'operational') {
+        toast.custom({
+            type: 'success',
+            title: 'Anthropic status update',
+            html: `Claude Code issues on Anthropic's side are now resolved — ${statusLink}`,
+            duration: Infinity,
+        })
+    } else {
+        const config = CLAUDE_STATUS_MESSAGES[status]
+        if (config) {
+            toast.custom({
+                type: config.type,
+                title: 'Anthropic status update',
+                html: `${config.message} — ${statusLink}`,
+                duration: Infinity,
+            })
+        }
+    }
+}
+
+/**
  * Handle update_available message from the backend.
  * Shows a persistent toast if the user hasn't been notified for this version yet.
  * Deduplication is done via localStorage to survive page reloads.
@@ -487,6 +541,9 @@ export function useWebSocket() {
                 break
             case 'update_available':
                 handleUpdateAvailable(msg)
+                break
+            case 'claude_status':
+                handleClaudeStatus(msg)
                 break
         }
     }
