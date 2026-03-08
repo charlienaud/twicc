@@ -4,26 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.4] - Unreleased
+## [1.1] - Unreleased
 
 ### Added
 
-- Added Claude effort level and thinking settings
-- Properly handle results from agents running in background
-- Handle `Agent` tool type as an alias for `Task`
-- Handle display of TodoWrite tool
-- Handle invalid TodoWrite tool input gracefully (invalid format shows JSON fallback)
+- Effort level and thinking settings for Claude sessions
+- Live tracking of Bash commands, agents and other possibly long-running tools
 - Syntax-highlighted code display for Read tool results
-- Show URL for WebFetch and search query for WebSearch/ToolSearch in tool use summaries
-- Include file attachments in optimistic user messages for instant display
-- Optimistic "starting" state: show "Claude is starting..." with process indicator immediately after sending a message, without waiting for the backend round-trip
-- Track execution time and state of bash and agents
+- Show URL/query in WebFetch, WebSearch, and ToolSearch tool summaries
 
 ### Changed
 
-- Classify `/clear` command items as system instead of user message
-- Upgrade Web Awesome 3.2 → 3.3.1 (and removes a lot of workarounds for problems now fixed)
-- Update claude-agent-sdk 0.1.45 → 0.1.47 (Claude Code CLI 2.1.63 → 2.1.70)
+- Upgrade Web Awesome 3.2 → 3.3.1 (removes many workarounds)
+- Update claude-agent-sdk 0.1.45 → 0.1.48 (Claude Code CLI 2.1.63 → 2.1.71)
+- Replace selects for model, permission, etc... in message input by simple button + popopver
+
+### Fixed
+
+- Classify `/clear` command items as system instead of user message, rewrite titles of sessions saved with "/clear" title
+- "starting" state of process wasn't visible
+- Fix custom session title not persisting on some circumstances
+- Fix mobile layout issues
+- Handle invalid TodoWrite
+- Missed file attachments in optimistic user messages
+- Improve backend resilience (watcher crash prevention, empty session handling, WebSocket error isolation)
 
 ## [1.0.3] - 2026-03-04
 
