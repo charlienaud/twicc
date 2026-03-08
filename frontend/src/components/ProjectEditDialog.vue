@@ -290,7 +290,12 @@ defineExpose({
                     placeholder="Project name"
                     maxlength="25"
                 ></wa-input>
-                <div class="form-hint">Optional display name (max 25 characters)</div>
+                <div class="form-hint">
+                    Optional display name (max 25 characters)
+                    <template v-if="!isCreateMode && localName.trim()">
+                        — <a href="#" class="clear-name-link" @click.prevent="localName = ''">Remove name</a> (will keep project out of the named section)
+                    </template>
+                </div>
             </div>
 
             <div class="form-group">
@@ -363,6 +368,15 @@ defineExpose({
 .form-hint {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
+}
+
+.clear-name-link {
+    color: var(--wa-color-brand-text);
+    text-decoration: none;
+}
+
+.clear-name-link:hover {
+    text-decoration: underline;
 }
 
 .dialog-footer {
