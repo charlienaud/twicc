@@ -56,6 +56,12 @@ let wasNearBottomAtDeactivation = false
 // while inactive and the composable's anchor is stale).
 let savedScrollAnchor = null
 
+// Pending scroll-to-bottom operation deferred because the scroller container was
+// hidden (e.g., chat tab panel has display:none when navigating directly to /files).
+// Set when scrollToBottomUntilStable would be called but the container has 0 height.
+// Consumed by onScrollerBecameVisible when the container first gets a positive height.
+let pendingScrollToBottom = null
+
 // Reference to the VirtualScroller component
 const scrollerRef = ref(null)
 
@@ -216,6 +222,9 @@ onDeactivated(() => {
 
     // Save scroll anchor as safety net for restoration after reactivation
     savedScrollAnchor = scroller ? scroller.getScrollAnchor() : null
+
+    // Clear pending scroll — KeepAlive deactivation takes over via handlePostResume
+    pendingScrollToBottom = null
 })
 
 // On reactivation: handle scroll restoration after KeepAlive reattaches the DOM.
@@ -264,6 +273,21 @@ function handlePostResume() {
     itemCountAtDeactivation = null
     wasNearBottomAtDeactivation = false
     savedScrollAnchor = null
+}
+
+/**
+ * Handle VirtualScroller becoming visible after being hidden (e.g., switching
+ * from Files/Git tab to Chat tab when the session was loaded while Chat was hidden).
+ *
+ * Executes any deferred scrollToBottomUntilStable that couldn't run while the
+ * scroller container had 0 height.
+ */
+function onScrollerBecameVisible() {
+    if (pendingScrollToBottom) {
+        const options = pendingScrollToBottom
+        pendingScrollToBottom = null
+        scrollToBottomUntilStable(options)
+    }
 }
 
 // Build base URL for API calls (handles subagent case)
@@ -411,7 +435,22 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession]) => {
     // Mark as initial scroll to hide scroller until positioned (only on first load)
     // When returning to an already-loaded session, items are already sized so no resize events will fire
     await nextTick()
-    scrollToBottomUntilStable({ isInitial: isFirstLoad })
+
+    // Check if the scroller container is visible (chat tab panel is active).
+    // When navigating directly to a non-chat tab (e.g., /files), the chat panel
+    // has display:none and scrollToBottom has no effect. In that case, defer the
+    // scroll until the chat tab becomes visible (handled by onScrollerBecameVisible).
+    const scroller = scrollerRef.value
+    const scrollState = scroller?.getScrollState()
+    if (scrollState && scrollState.clientHeight === 0) {
+        pendingScrollToBottom = { isInitial: isFirstLoad }
+        if (isFirstLoad) {
+            isInitialScrolling.value = true
+        }
+    } else {
+        pendingScrollToBottom = null
+        scrollToBottomUntilStable({ isInitial: isFirstLoad })
+    }
 }, { immediate: true })
 
 // Retry loading session data after error
@@ -887,6 +926,7 @@ defineExpose({
             :class="{ 'initial-scrolling': isInitialScrolling }"
             @update="onScrollerUpdate"
             @item-resized="onItemResized"
+            @became-visible="onScrollerBecameVisible"
         >
             <template #default="{ item, index }">
                 <!-- Placeholder (no content loaded yet) -->

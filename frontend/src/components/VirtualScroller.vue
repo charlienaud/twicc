@@ -103,7 +103,13 @@ const emit = defineEmits([
      * Emitted on scroll events (passive).
      * Payload: native scroll Event
      */
-    'scroll'
+    'scroll',
+    /**
+     * Emitted when the container transitions from hidden (0 height) to visible.
+     * Useful for deferring scroll operations that couldn't execute while hidden
+     * (e.g., scrollToBottom on a hidden wa-tab-panel).
+     */
+    'became-visible',
 ])
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -365,6 +371,12 @@ onMounted(() => {
                 lastKnownViewportHeight = height
 
                 updateViewportHeight(height)
+
+                // Emit after updateViewportHeight so viewportHeight is correct
+                // when the handler runs (e.g., for deferred scrollToBottom).
+                if (wasHidden && isNowVisible && hasMounted) {
+                    emit('became-visible')
+                }
             })
             containerObserver.observe(containerRef.value)
         }
