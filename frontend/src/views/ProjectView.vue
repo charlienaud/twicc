@@ -818,7 +818,7 @@ function updateSidebarClosedClass(closed) {
                             <wa-icon name="chevron-up" label="Choose another project"></wa-icon>
                         </wa-button>
                         <wa-dropdown-item value="__new_project__">
-                            <wa-icon slot="prefix" name="plus-lg"></wa-icon>
+                            <wa-icon slot="icon" name="plus"></wa-icon>
                             New project
                         </wa-dropdown-item>
 
@@ -881,7 +881,7 @@ function updateSidebarClosedClass(closed) {
                         <span>New session</span>
                     </wa-button>
                     <wa-dropdown-item value="__new_project__">
-                        <wa-icon slot="prefix" name="plus-lg"></wa-icon>
+                        <wa-icon slot="icon" name="plus"></wa-icon>
                         New project
                     </wa-dropdown-item>
 

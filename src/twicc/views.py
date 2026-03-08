@@ -627,6 +627,45 @@ def file_search(request, project_id, session_id=None):
     return JsonResponse(tree)
 
 
+def standalone_directory_tree(request):
+    """GET directory tree listing for any absolute directory path.
+
+    Unlike the project-scoped directory-tree endpoint, this does not require
+    a project and does not validate path ownership. The user can browse any
+    directory accessible with their OS permissions — this is intentional since
+    TwiCC is a local-only tool running on the user's own machine.
+
+    Authentication is enforced by PasswordAuthMiddleware.
+    Always passes show_ignored=True so directories inside git repos are not
+    hidden by .gitignore rules (the user needs to see all directories when
+    picking a project root).
+    """
+    from twicc.file_tree import get_directory_tree
+
+    dir_path = request.GET.get("path", "").strip()
+    if not dir_path:
+        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+
+    dir_path = os.path.normpath(dir_path)
+
+    if not os.path.isabs(dir_path):
+        return JsonResponse({"error": "Path must be absolute"}, status=400)
+
+    if not os.path.isdir(dir_path):
+        return JsonResponse({"error": "Directory not found"}, status=404)
+
+    show_hidden = request.GET.get("show_hidden") == "1"
+    directories_only = request.GET.get("directories_only") == "1"
+
+    tree = get_directory_tree(dir_path, show_hidden=show_hidden, show_ignored=True, directories_only=directories_only)
+    return JsonResponse(tree)
+
+
+def home_directory(request):
+    """GET the current user's home directory path."""
+    return JsonResponse({"path": os.path.expanduser("~")})
+
+
 def file_content(request, project_id, session_id=None):
     """GET/PUT file content.
 

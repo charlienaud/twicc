@@ -12,6 +12,9 @@ urlpatterns = [
     path("api/home/", views.home_data),
     path("api/daily-activity/", views.daily_activity),  # Global daily activity
     path("api/sessions/", views.all_sessions),
+    # Standalone filesystem endpoints (for directory picker, no project required)
+    path("api/directory-tree/", views.standalone_directory_tree),
+    path("api/home-directory/", views.home_directory),
     path("api/projects/", views.project_list),
     path("api/projects/<str:project_id>/", views.project_detail),
     path("api/projects/<str:project_id>/daily-activity/", views.daily_activity),  # Per-project daily activity

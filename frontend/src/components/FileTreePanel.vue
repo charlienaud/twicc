@@ -88,6 +88,14 @@ const props = defineProps({
         type: String,
         default: 'files',  // 'files' | 'git'
     },
+    directoriesOnly: {
+        type: Boolean,
+        default: false,
+    },
+    compactFolders: {
+        type: Boolean,
+        default: true,
+    },
     /**
      * Whether the panel is in mobile layout mode.
      * When true, the file tree is hidden behind a header that shows the
@@ -551,7 +559,14 @@ function handleTreeKeydown(event) {
             break
         }
 
-        case 'Enter':
+        case 'Enter': {
+            event.preventDefault()
+            if (index >= 0) {
+                activateFocused(items, index)
+            }
+            break
+        }
+
         case ' ': {
             event.preventDefault()
             if (index >= 0) {
@@ -793,7 +808,7 @@ defineExpose({
             class="file-tree-panel-content"
         >
             <!-- Search input + options (only shown when tree is loaded) -->
-            <div v-if="tree" class="files-search">
+            <div v-if="tree && searchFn" class="files-search">
                 <wa-dropdown
                     placement="bottom-start"
                     class="files-options-dropdown"
@@ -892,6 +907,9 @@ defineExpose({
                         :selected-path="selectedAbsPath"
                         :is-draft="isDraft"
                         :mode="mode"
+                        :directories-only="directoriesOnly"
+                        :compact-folders="compactFolders"
+                        :lazy-load-fn="lazyLoadFn"
                         @select="onFileSelect"
                         @focus="onNodeFocus"
                     />

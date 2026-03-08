@@ -50,11 +50,11 @@ const props = defineProps({
     },
     projectId: {
         type: String,
-        required: true,
+        default: null,
     },
     sessionId: {
         type: String,
-        required: true,
+        default: null,
     },
     depth: {
         type: Number,
@@ -92,6 +92,18 @@ const props = defineProps({
         type: String,
         default: 'files',  // 'files' | 'git'
     },
+    directoriesOnly: {
+        type: Boolean,
+        default: false,
+    },
+    compactFolders: {
+        type: Boolean,
+        default: true,
+    },
+    lazyLoadFn: {
+        type: Function,
+        default: null,
+    },
 })
 
 const emit = defineEmits(['select', 'focus'])
@@ -119,8 +131,20 @@ const apiPrefix = computed(() => {
  * - the directory has loaded: false (not yet fetched)
  * - the node is the root (root is never compacted with its children)
  */
+/**
+ * Get children relevant for compact folder logic.
+ * In directoriesOnly mode, only directory children are considered.
+ */
+function getCompactableChildren(node) {
+    if (!node.children) return []
+    if (props.directoriesOnly) {
+        return node.children.filter(c => c.type === 'directory')
+    }
+    return node.children
+}
+
 const compact = computed(() => {
-    if (props.node.type !== 'directory' || props.isRoot) {
+    if (props.node.type !== 'directory' || props.isRoot || !props.compactFolders) {
         return { displayName: props.node.name, effectiveNode: props.node, effectivePath: props.path }
     }
 
@@ -128,18 +152,33 @@ const compact = computed(() => {
     let currentPath = props.path
     const nameParts = [current.name]
 
-    while (
-        current.type === 'directory' &&
-        current.loaded !== false &&
-        current.children?.length === 1 &&
-        current.children[0].type === 'directory'
-    ) {
-        current = current.children[0]
+    while (true) {
+        const children = getCompactableChildren(current)
+        if (
+            current.type !== 'directory' ||
+            current.loaded === false ||
+            children.length !== 1 ||
+            children[0].type !== 'directory'
+        ) break
+        current = children[0]
         currentPath = `${currentPath}/${current.name}`
         nameParts.push(current.name)
     }
 
     return { displayName: nameParts.join('/'), effectiveNode: current, effectivePath: currentPath }
+})
+
+/**
+ * Visible children of the effective node.
+ * In directoriesOnly mode, file nodes are filtered out.
+ */
+const visibleChildren = computed(() => {
+    const children = compact.value.effectiveNode.children
+    if (!children) return []
+    if (props.directoriesOnly) {
+        return children.filter(child => child.type === 'directory')
+    }
+    return children
 })
 
 // Directories: root and allOpen start open, others start closed.
@@ -164,6 +203,10 @@ function handleClick() {
     emit('focus', nodePath.value)
     if (props.node.type === 'directory') {
         toggleOpen()
+        // In directoriesOnly mode, clicking a directory also selects it
+        if (props.directoriesOnly) {
+            emit('select', compact.value.effectivePath)
+        }
     } else {
         emit('select', props.path)
     }
@@ -179,11 +222,18 @@ async function toggleOpen() {
     if (!isOpen.value && effectiveNode.loaded === false && props.mode !== 'git') {
         isLoading.value = true
         try {
-            const res = await apiFetch(
-                `${apiPrefix.value}/directory-tree/?path=${encodeURIComponent(effectivePath)}${props.extraQuery}`
-            )
-            if (res.ok) {
-                const data = await res.json()
+            let data
+            if (props.lazyLoadFn) {
+                data = await props.lazyLoadFn(effectivePath)
+            } else {
+                const res = await apiFetch(
+                    `${apiPrefix.value}/directory-tree/?path=${encodeURIComponent(effectivePath)}${props.extraQuery}`
+                )
+                if (res.ok) {
+                    data = await res.json()
+                }
+            }
+            if (data) {
                 // Mutate the node in-place: inject fetched children
                 effectiveNode.children = data.children || []
                 effectiveNode.loaded = true
@@ -324,12 +374,12 @@ const gitBadge = computed(() => {
 
         <!-- Children (only rendered when directory is open) -->
         <div
-            v-if="isOpen && compact.effectiveNode.type === 'directory' && compact.effectiveNode.children?.length"
+            v-if="isOpen && compact.effectiveNode.type === 'directory' && visibleChildren.length"
             class="node-children"
             role="group"
         >
             <FileTree
-                v-for="child in compact.effectiveNode.children"
+                v-for="child in visibleChildren"
                 :key="child.name"
                 :node="child"
                 :path="childPath(child.name)"
@@ -343,6 +393,9 @@ const gitBadge = computed(() => {
                 :selected-path="selectedPath"
                 :is-draft="isDraft"
                 :mode="mode"
+                :directories-only="directoriesOnly"
+                :compact-folders="compactFolders"
+                :lazy-load-fn="lazyLoadFn"
                 @select="(path) => emit('select', path)"
                 @focus="(path) => emit('focus', path)"
             />

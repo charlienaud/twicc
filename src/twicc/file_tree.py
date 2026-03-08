@@ -81,7 +81,7 @@ def validate_path(project_id, dir_path, session_id=None):
     return session, dir_path, None
 
 
-def get_directory_tree(dir_path, show_hidden=False, show_ignored=False):
+def get_directory_tree(dir_path, show_hidden=False, show_ignored=False, directories_only=False):
     """Build a directory tree using BFS with a node budget.
 
     Returns a dict with the tree structure:
@@ -177,6 +177,8 @@ def get_directory_tree(dir_path, show_hidden=False, show_ignored=False):
             is_dir = entry.is_dir(follow_symlinks=False)
             result.append((entry.name, "directory" if is_dir else "file"))
         result.sort(key=lambda x: (0 if x[1] == "directory" else 1, x[0].lower()))
+        if directories_only:
+            result = [(name, typ) for name, typ in result if typ == "directory"]
         return result
 
     # ── BFS tree construction with node budget ───────────────────────────────

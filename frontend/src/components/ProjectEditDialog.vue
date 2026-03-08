@@ -3,6 +3,7 @@
 import { ref, computed, watch, nextTick, useId } from 'vue'
 import { useDataStore } from '../stores/data'
 import { apiFetch } from '../utils/api'
+import DirectoryPickerPopup from './DirectoryPickerPopup.vue'
 
 const props = defineProps({
     project: {
@@ -257,12 +258,16 @@ defineExpose({
             <!-- Create mode: directory input -->
             <div v-if="isCreateMode" class="form-group">
                 <label class="form-label">Directory</label>
-                <wa-input
-                    ref="directoryInputRef"
-                    :value.prop="localDirectory"
-                    @input="onDirectoryInput"
-                    placeholder="/path/to/your/project"
-                ></wa-input>
+                <div class="directory-input-row">
+                    <wa-input
+                        ref="directoryInputRef"
+                        :value.prop="localDirectory"
+                        @input="onDirectoryInput"
+                        placeholder="/path/to/your/project"
+                        class="directory-input"
+                    ></wa-input>
+                    <DirectoryPickerPopup v-model="localDirectory" />
+                </div>
                 <div class="form-hint">Absolute path to the project directory</div>
             </div>
 
@@ -368,6 +373,17 @@ defineExpose({
 .form-hint {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
+}
+
+.directory-input-row {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+}
+
+.directory-input {
+    flex: 1;
+    min-width: 0;
 }
 
 .clear-name-link {
