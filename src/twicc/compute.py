@@ -642,6 +642,125 @@ def transform_task_notification(parsed_json: dict) -> str | None:
     return orjson.dumps(parsed_json).decode('utf-8')
 
 
+# Regex to strip ANSI escape codes from local command output
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+# Local command output tags (stdout and stderr)
+_LOCAL_COMMAND_TAGS = (
+    ('<local-command-stdout>', '</local-command-stdout>'),
+    ('<local-command-stderr>', '</local-command-stderr>'),
+)
+
+# Prefixes/suffixes that indicate a local command output should be filtered out (not displayed)
+_LOCAL_COMMAND_FILTERED_PREFIXES = ('compacted',)
+_LOCAL_COMMAND_FILTERED_SUFFIXES = ('dismissed', 'cancelled', 'no content')
+
+
+def transform_local_command_output(parsed_json: dict) -> str | None:
+    """
+    Transform a local-command-stdout/stderr message into a synthetic assistant_message.
+
+    Local command outputs appear in two formats in JSONL:
+    1. ``type: "system", subtype: "local_command"`` with content containing
+       ``<local-command-stdout>...</local-command-stdout>`` (or stderr variant)
+    2. ``type: "user"`` with message.content (string or text block) containing
+       ``<local-command-stdout>...</local-command-stdout>`` (or stderr variant)
+
+    This function detects such messages, extracts the text from the XML tag,
+    strips ANSI escape codes, and rewrites ``parsed_json`` **in place** so that
+    downstream code sees a standard assistant_message item.
+
+    Messages whose content is empty, starts with "compacted", or ends with
+    "dismissed" or "cancelled" are filtered out (returns ``None``).
+
+    Args:
+        parsed_json: The parsed JSONL line (mutated in place if transformed).
+
+    Returns:
+        The new serialised JSON string to store in DB if a transformation was
+        performed, or ``None`` if the item was not a local-command-stdout/stderr
+        or was filtered out.
+    """
+    entry_type = parsed_json.get('type')
+    raw_text = None
+
+    # Format 1: type=system, subtype=local_command
+    if entry_type == 'system' and parsed_json.get('subtype') == 'local_command':
+        content = parsed_json.get('content', '')
+        if isinstance(content, str):
+            raw_text = _extract_local_command_text(content)
+
+    # Format 2: type=user, message.content contains the tag
+    elif entry_type == 'user':
+        message = parsed_json.get('message')
+        if isinstance(message, dict):
+            content = message.get('content')
+            if isinstance(content, str):
+                raw_text = _extract_local_command_text(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get('type') == 'text':
+                        extracted = _extract_local_command_text(block.get('text', ''))
+                        if extracted is not None:
+                            raw_text = extracted
+                            break
+
+    if raw_text is None:
+        return None
+
+    # Strip ANSI escape codes and whitespace
+    text = _ANSI_RE.sub('', raw_text).strip()
+
+    # Filter out empty or non-interesting messages
+    if not text:
+        return None
+    text_lower = text.lower()
+    if any(text_lower.startswith(prefix) or text_lower.startswith("(" + prefix) for prefix in _LOCAL_COMMAND_FILTERED_PREFIXES):
+        return None
+    if any(text_lower.endswith(suffix) or text_lower.endswith(suffix + ")") for suffix in _LOCAL_COMMAND_FILTERED_SUFFIXES):
+        return None
+
+    # Preserve original content for debugging
+    if entry_type == 'system':
+        parsed_json['twiccOriginalContent'] = parsed_json.get('content')
+    else:
+        parsed_json['twiccOriginalContent'] = parsed_json.get('message', {}).get('content')
+
+    # Rewrite as a standard assistant message
+    parsed_json['type'] = 'assistant'
+    parsed_json.pop('subtype', None)
+    parsed_json['message'] = {
+        'role': 'assistant',
+        'content': [{'type': 'text', 'text': text}],
+    }
+
+    # Serialise and return the new content for DB storage
+    return orjson.dumps(parsed_json).decode('utf-8')
+
+
+def _extract_local_command_text(text: str) -> str | None:
+    """
+    Extract the text content from a ``<local-command-stdout>`` or
+    ``<local-command-stderr>`` tag.
+
+    Uses rfind for the closing tag to avoid issues if the closing tag
+    appears inside the content itself.
+
+    Returns the inner text, or ``None`` if no tag is found.
+    """
+    stripped = text.lstrip()
+    for open_tag, close_tag in _LOCAL_COMMAND_TAGS:
+        start_idx = stripped.find(open_tag)
+        if start_idx == -1:
+            continue
+        content_start = start_idx + len(open_tag)
+        close_idx = stripped.rfind(close_tag)
+        if close_idx == -1 or close_idx < content_start:
+            continue
+        return stripped[content_start:close_idx]
+    return None
+
+
 def extract_title_from_user_message(parsed_json: dict) -> str | None:
     """
     Extract a title from a user message JSON.
@@ -1515,6 +1634,10 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
 
         # Transform task-notification XML into standard tool_result format
         new_content = transform_task_notification(parsed)
+        if new_content is None:
+            # Transform local-command-stdout into assistant_message format
+            new_content = transform_local_command_output(parsed)
+
         if new_content is not None:
             item.content = new_content
             content_overrides.append({'id': item.id, 'content': new_content})

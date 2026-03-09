@@ -26,7 +26,7 @@ from twicc.compute import AgentLinkUpdate, AgentStoppedUpdate, ToolResultUpdate,
     get_project_directory, get_project_git_root, is_agent_link_done, \
     is_tool_result_item, load_project_directories, \
     load_project_git_roots, read_head_branch, resolve_git_from_path, \
-    transform_task_notification, \
+    transform_local_command_output, transform_task_notification, \
     update_project_metadata as _update_project_metadata_sync
 from twicc.core.enums import ItemDisplayLevel, ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
@@ -618,6 +618,10 @@ def sync_session_items(
 
         # Transform task-notification XML into standard tool_result format
         new_content = transform_task_notification(parsed)
+        if new_content is None:
+            # Transform local-command-stdout into assistant_message format
+            new_content = transform_local_command_output(parsed)
+
         if new_content is not None:
             item.content = new_content
 
