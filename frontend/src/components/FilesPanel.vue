@@ -24,6 +24,10 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    sessionCwd: {
+        type: String,
+        default: null,
+    },
     projectGitRoot: {
         type: String,
         default: null,
@@ -72,44 +76,81 @@ const fileTreePanelRef = ref(null)
  * Available root directories.
  * Each entry: { key, label, path }
  *
- * The effective git root is the session's git_directory (from tool_use analysis)
- * or, if absent, the project's git_root (from walking up from project directory).
+ * Candidates (in priority order depending on context):
+ *   - session.git_directory — git root detected from tool_use analysis
+ *   - session.cwd — the session's current working directory
+ *   - project.directory — the Claude project directory
+ *   - project.git_root — git root found by walking up from project.directory
+ *     (only used when session.git_directory is absent, to avoid redundancy)
  *
- * If git root and project directory are the same path, they are merged into a
- * single entry labelled "Project directory (git root)".
+ * When session.git_directory exists, it is the default (listed first):
+ *   [git_directory, cwd, project.directory]
+ * Otherwise, the project directory is the default:
+ *   [project.directory, cwd, project.git_root]
  *
- * When the git root comes from the session (active git context), it is the
- * default (listed first). When it comes from the project only (the project
- * happens to be inside a git repo, but the session hasn't touched git), the
- * project directory is the default and the git root is listed second.
+ * Paths that resolve to the same value are merged into a single entry with
+ * a composite label (e.g. "Project directory (git root, cwd)").
  */
 const availableRoots = computed(() => {
     const sessionGit = props.gitDirectory
+    const cwd = props.sessionCwd
     const projectGitRoot = props.projectGitRoot
-    const git = sessionGit || projectGitRoot
     const project = props.projectDirectory
 
-    if (git && project && git === project) {
-        // Same path — merge into one entry
-        return [{ key: 'project', label: 'Project directory (git root)', path: project }]
+    // Step 1: Register each path with its role(s).
+    // When multiple candidates share the same path, roles are merged.
+    const pathRoles = new Map()  // path → { key, roles: Set }
+
+    function register(path, role, key) {
+        if (!path) return
+        if (pathRoles.has(path)) {
+            pathRoles.get(path).roles.add(role)
+        } else {
+            pathRoles.set(path, { key, roles: new Set([role]) })
+        }
     }
 
-    const roots = []
     if (sessionGit) {
-        // Session has an active git context — git root is the default
-        roots.push({ key: 'git', label: 'Git root', path: sessionGit })
-        if (project && project !== sessionGit) {
-            roots.push({ key: 'project', label: 'Project directory', path: project })
-        }
-    } else {
-        // No session git — project directory is the default
-        if (project) {
-            roots.push({ key: 'project', label: 'Project directory', path: project })
-        }
-        if (projectGitRoot && projectGitRoot !== project) {
-            roots.push({ key: 'git', label: 'Git root', path: projectGitRoot })
-        }
+        register(sessionGit, 'git_root', 'git')
     }
+    register(cwd, 'cwd', 'cwd')
+    register(project, 'project_dir', 'project')
+    if (!sessionGit) {
+        register(projectGitRoot, 'git_root', 'git')
+    }
+
+    // Step 2: Build a human-readable label from the set of roles.
+    function buildLabel(roles) {
+        const isGit = roles.has('git_root')
+        const isCwd = roles.has('cwd')
+        const isProject = roles.has('project_dir')
+
+        if (isProject && isGit) return 'Project directory (git root)'
+        if (isProject)         return 'Project directory'
+        if (isGit)             return 'Git root'
+        if (isCwd)             return 'Working directory'
+        return 'Directory'
+    }
+
+    // Step 3: Build the ordered list. Priority depends on whether the session
+    // has its own git context. Duplicates are naturally skipped (already in pathRoles).
+    const order = sessionGit
+        ? [sessionGit, cwd, project]
+        : [project, cwd, projectGitRoot]
+
+    const roots = []
+    const seen = new Set()
+    for (const path of order) {
+        if (!path || seen.has(path)) continue
+        seen.add(path)
+        const info = pathRoles.get(path)
+        roots.push({
+            key: info.key,
+            label: buildLabel(info.roles),
+            path,
+        })
+    }
+
     return roots
 })
 
@@ -218,14 +259,14 @@ async function fetchTree(projectId, sessionId, dirPath) {
             const data = await res.json()
 
             // If the directory was not found, mark this root as missing
-            // and automatically fall back to the project directory when possible.
-            if (res.status === 404 && selectedRootKey.value === 'git') {
-                missingRoots.value = new Set([...missingRoots.value, 'git'])
-                const projectRoot = availableRoots.value.find(r => r.key === 'project')
-                if (projectRoot) {
-                    selectedRootKey.value = 'project'
+            // and automatically fall back to the next available root.
+            if (res.status === 404 && selectedRootKey.value) {
+                missingRoots.value = new Set([...missingRoots.value, selectedRootKey.value])
+                const fallback = availableRoots.value.find(r => !missingRoots.value.has(r.key))
+                if (fallback) {
+                    selectedRootKey.value = fallback.key
                     // The watcher on `directory` will re-trigger fetchTree
-                    // with the project directory, so we can return here.
+                    // with the fallback directory, so we can return here.
                     return
                 }
             }

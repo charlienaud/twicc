@@ -107,10 +107,12 @@ function onRootChanged(path) {
  */
 async function viewFileInFilesTab(absolutePath) {
     // Ensure the Files tab root can reach the file.
-    // Determine the git root that contains this file path and switch to it.
+    // Determine the root directory that contains this file path and switch to it.
     const gitDir = session.value?.git_directory
+    const sessionCwd = session.value?.cwd
     const projectGitRoot = store.getProject(session.value?.project_id)?.git_root
-    const matchingRoot = [gitDir, projectGitRoot].find(
+    const projectDir = store.getProject(session.value?.project_id)?.directory
+    const matchingRoot = [gitDir, sessionCwd, projectDir, projectGitRoot].find(
         root => root && absolutePath.startsWith(root + '/')
     )
     if (matchingRoot) {
@@ -634,6 +636,7 @@ function handleNeedsTitle() {
                     :session-id="session?.id"
                     :synced-git-dir="syncedGitDirPath"
                     :git-directory="session?.git_directory"
+                    :session-cwd="session?.cwd"
                     :project-git-root="store.getProject(session?.project_id)?.git_root"
                     :project-directory="store.getProject(session?.project_id)?.directory"
                     :active="isActive && activeTabId === 'files'"
