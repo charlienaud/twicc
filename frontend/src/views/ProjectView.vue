@@ -444,20 +444,48 @@ watch(() => route.fullPath, (newPath) => {
 // Uses a computed to reactively track the archived state of the current session,
 // so this works regardless of where the archive action was triggered
 // (session list menu, session header button, etc.).
+// Only reacts when a session transitions from non-archived to archived while
+// we are viewing it, not when navigating to a session that was already archived
+// (e.g. from search results).
+//
+// The key challenge: when navigating to a session in a different project, the
+// session data isn't in the store yet. The computed returns null (not loaded),
+// then when loadSessions() completes, it flips to true. We must not treat this
+// as an "archive action" — we use a three-state computed (null/false/true) and
+// a flag that tracks whether we've ever seen the session as non-archived.
 const currentSessionArchived = computed(() => {
-    if (!sessionId.value) return false
-    return store.sessions[sessionId.value]?.archived ?? false
+    if (!sessionId.value) return null
+    const session = store.sessions[sessionId.value]
+    if (!session) return null  // session not loaded yet
+    return session.archived ?? false
+})
+
+// Tracks whether we've confirmed that the current session was non-archived
+// after its data loaded. Only redirect when this is true (meaning the session
+// was actively archived while we were viewing it).
+let sessionConfirmedNonArchived = false
+
+watch(sessionId, () => {
+    sessionConfirmedNonArchived = false
 })
 
 watch(currentSessionArchived, (archived) => {
-    if (!archived) return
+    if (archived === null) return  // session not loaded yet, ignore
+    if (!archived) {
+        // Session is loaded and not archived — record this so we can
+        // detect a future false→true transition as an archive action.
+        sessionConfirmedNonArchived = true
+        return
+    }
+    // archived is true — only redirect if we previously saw it as non-archived
+    if (!sessionConfirmedNonArchived) return
     if (showArchivedSessions.value) return  // session stays visible, no need to navigate
 
     const nextPath = store.getNextMruPath(sessionId.value)
     if (nextPath) {
         router.push(nextPath)
     }
-})
+}, { immediate: true })
 
 // On mobile, close sidebar when session changes
 watch(sessionId, (newSessionId) => {
