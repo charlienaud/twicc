@@ -383,7 +383,7 @@ def search(
     _check_index()
 
     try:
-        text_query = _index.parse_query(query_str, ["body"])
+        text_query = _index.parse_query(query_str, ["body"], conjunction_by_default=True)
     except ValueError:
         logger.warning("Failed to parse search query: %r", query_str)
         return SearchResults(query=query_str, total_sessions=0, results=[])
