@@ -39,6 +39,9 @@ Then open http://localhost:3500.
 - Track costs and token usage per session
 - Daily activity heatmaps
 - Git integration (log, diffs, file browser)
+- Full-text search across all sessions (Ctrl+Shift+F) with in-session search (Ctrl+F)
+- Self-aware: TwiCC ships a Claude Code plugin (with skills) that lets Claude query your projects, sessions, costs, and search history — Claude knows about itself
+- CLI with JSON-output subcommands for scripting (projects, sessions, search, usage…)
 - Claude Code status monitoring (via status.claude.com)
 - Optional password protection
 - Real-time updates via WebSocket
