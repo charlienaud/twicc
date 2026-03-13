@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Bash tool input commands no longer incorrectly rendered as Markdown
 - Stop process button shows a loading state to prevent duplicate clicks
 - Refresh button in Files tab now also reloads the currently open file (unless it has unsaved changes)
+- Quota cutoff time now visible even when cost display is disabled (cutoff is burn-rate-based, not cost-based)
 
 ## [1.1.2] - 2026-03-09
 
