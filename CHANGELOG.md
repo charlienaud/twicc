@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Dedicated display for Edit (inline diff) and Write (syntax-highlighted code) tool uses
 - Popup filter keystrokes (@ file picker, / slash picker) are now mirrored into the textarea transparently (inspired by @dguerizec)
 - File picker (@) only triggers at start of text or after whitespace (inspired by @dguerizec)
 

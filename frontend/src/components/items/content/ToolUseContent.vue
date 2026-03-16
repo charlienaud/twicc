@@ -12,6 +12,8 @@ import JsonHumanView from '../../JsonHumanView.vue'
 import MarkdownContent from '../../MarkdownContent.vue'
 import AppTooltip from '../../AppTooltip.vue'
 import ProcessDuration from '../../ProcessDuration.vue'
+import EditContent from './EditContent.vue'
+import WriteContent from './WriteContent.vue'
 import TodoContent from './TodoContent.vue'
 
 const route = useRoute()
@@ -429,6 +431,14 @@ const toolSearchQuery = computed(() => {
     return props.input?.query || null
 })
 
+// --- Edit tool: dedicated diff display ---
+const isEdit = computed(() => props.name === 'Edit')
+const editValid = computed(() => isEdit.value && 'old_string' in props.input && 'new_string' in props.input)
+
+// --- Write tool: dedicated code display ---
+const isWrite = computed(() => props.name === 'Write')
+const writeValid = computed(() => isWrite.value && 'content' in props.input)
+
 // --- TodoWrite tool summary ---
 const isTodoWrite = computed(() => props.name === 'TodoWrite')
 const todosValid = computed(() => isTodoWrite.value && isValidTodos(props.input?.todos))
@@ -461,6 +471,18 @@ const isToolError = computed(() => !!toolErrorText.value)
 const showResultDetailsOnError = computed(() => {
     if (!isToolError.value) return false
     return props.name === 'Bash' || toolErrorText.value === 'Unknown error'
+})
+
+// Central guard for Result details visibility
+const showResultDetails = computed(() => {
+    // TodoWrite with valid todos: never show result
+    if (isTodoWrite.value && todosValid.value) return false
+    // Edit/Write with dedicated display: only show result for Unknown error
+    if (editValid.value || writeValid.value) return toolErrorText.value === 'Unknown error'
+    // Tool error: show only for Bash or Unknown error
+    if (isToolError.value) return showResultDetailsOnError.value
+    // Default: show
+    return true
 })
 
 // Diff stats for Edit/Write tools (parsed from the extra JSON field)
@@ -656,6 +678,8 @@ function navigateToSubagent() {
         </span>
         <template v-if="isOpen">
             <TodoContent v-if="isTodoWrite && todosValid" :todos="input.todos" />
+            <EditContent v-else-if="editValid" :input="input" />
+            <WriteContent v-else-if="writeValid" :input="input" />
             <div v-else-if="displayInput" class="tool-input">
                 <JsonHumanView
                     :value="displayInput"
@@ -670,7 +694,7 @@ function navigateToSubagent() {
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                 {{ toolErrorText }}
             </wa-callout>
-            <wa-details v-if="(!isTodoWrite || !todosValid) && (!isToolError || showResultDetailsOnError)" ref="resultDetailsRef" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
+            <wa-details v-if="showResultDetails" ref="resultDetailsRef" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
                 <span slot="summary">Result</span>
                 <div class="tool-result-content">
                     <div v-if="resultState === 'loading'" class="tool-result-loading">
