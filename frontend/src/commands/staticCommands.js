@@ -300,6 +300,14 @@ export function initStaticCommands(router) {
             action: () => settings.setEditorWordWrap(!settings.editorWordWrap),
         },
         {
+            id: 'display.toggle-show-diffs',
+            label: 'Toggle Auto Open Edit Diffs',
+            icon: 'code-compare',
+            category: 'display',
+            toggled: () => settings.isShowDiffs,
+            action: () => settings.setShowDiffs(!settings.showDiffs),
+        },
+        {
             id: 'display.toggle-diff-layout',
             label: 'Toggle Side-by-Side Diff',
             icon: 'columns',
