@@ -948,23 +948,37 @@ def is_tool_result_item(parsed_json: dict) -> bool:
     return any(isinstance(item, dict) and item.get('type') == 'tool_result' for item in content)
 
 
-def compute_edit_diff_stats(parsed_json: dict) -> str | None:
+def compute_file_change_stats(parsed_json: dict) -> str | None:
     """
-    Compute diff stats from an Edit tool_result's structuredPatch.
+    Compute diff stats from an Edit or Write tool_result's ``toolUseResult``.
 
-    Looks at the root-level ``toolUseResult`` key for a ``structuredPatch``
-    list of unified-diff hunks.  Each hunk has a ``lines`` list where entries
-    prefixed with ``"+"`` are additions and ``"-"`` are removals.
+    For **Edit** and **Write updates** (overwriting an existing file), the
+    ``structuredPatch`` list of unified-diff hunks is used.  Each hunk has a
+    ``lines`` list where entries prefixed with ``"+"`` are additions and
+    ``"-"`` are removals.
+
+    For **Write creates** (new file), the ``content`` field is used to count
+    the total number of lines added (no removals).
 
     Returns a JSON string like ``{"lines_added": 5, "lines_removed": 3}``
     (with an extra ``"hunks"`` key when there are multiple hunks), or *None*
-    when the data is unavailable (error result, old format, non-Edit tool).
+    when the data is unavailable (error result, old format).
     """
     tool_use_result = parsed_json.get('toolUseResult')
     if not isinstance(tool_use_result, dict):
         return None
 
     structured_patch = tool_use_result.get('structuredPatch')
+
+    # Write creates: structuredPatch is empty, count lines from content
+    if isinstance(structured_patch, list) and not structured_patch:
+        content = tool_use_result.get('content')
+        if isinstance(content, str):
+            lines_added = content.count('\n') + 1 if content else 0
+            return orjson.dumps({'lines_added': lines_added}).decode()
+        return None
+
+    # Edit and Write updates: count +/- from structuredPatch hunks
     if not isinstance(structured_patch, list) or not structured_patch:
         return None
 
@@ -1781,7 +1795,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         tool_result_ref = get_tool_result_id(parsed)
         if tool_result_ref and tool_result_ref in tool_use_map:
             tu_line_num, tu_name = tool_use_map[tool_result_ref]
-            extra = compute_edit_diff_stats(parsed) if tu_name == 'Edit' else None
+            extra = compute_file_change_stats(parsed) if tu_name in ('Edit', 'Write') else None
             is_error = get_tool_result_is_error(parsed)
             tool_result_links_to_create.append({
                 'session_id': session_id,
@@ -2001,7 +2015,7 @@ def create_tool_result_link_live(
         tool_use_entries = get_tool_use_entries(candidate_parsed)
         if tool_use_id in tool_use_entries:
             tool_name = tool_use_entries[tool_use_id]
-            extra = compute_edit_diff_stats(parsed_json) if tool_name == 'Edit' else None
+            extra = compute_file_change_stats(parsed_json) if tool_name in ('Edit', 'Write') else None
             is_error = get_tool_result_is_error(parsed_json)
             _, created = ToolResultLink.objects.get_or_create(
                 session_id=session_id,

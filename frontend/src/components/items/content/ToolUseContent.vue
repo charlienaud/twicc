@@ -450,15 +450,15 @@ const displayInput = computed(() => {
 
 const isTask = computed(() => AGENT_TOOL_NAMES.has(props.name))
 const isBackground = computed(() => !!props.input?.run_in_background)
-const isEdit = computed(() => props.name === 'Edit')
 const toolState = computed(() => dataStore.getToolState(props.sessionId, props.toolId))
 
 // Whether the tool_result reported an error
 const isToolError = computed(() => !!toolState.value?.isError)
 
-// Diff stats for Edit tools (parsed from the extra JSON field)
-const editDiffStats = computed(() => {
-    if (!isEdit.value || !toolState.value?.extra) return null
+// Diff stats for Edit/Write tools (parsed from the extra JSON field)
+const FILE_CHANGE_TOOLS = new Set(['Edit', 'Write'])
+const fileChangeStats = computed(() => {
+    if (!FILE_CHANGE_TOOLS.has(props.name) || !toolState.value?.extra) return null
     try {
         return JSON.parse(toolState.value.extra)
     } catch {
@@ -548,7 +548,7 @@ function navigateToSubagent() {
 </script>
 
 <template>
-    <wa-details class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning || isToolError || editDiffStats}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
+    <wa-details class="item-details tool-use" :class="{'with-right-part' : (isTask && !parentSessionId) || isToolRunning || isToolError || fileChangeStats}" icon-placement="start" @wa-show.self="onToolUseOpen" @wa-hide.self="onToolUseClose">
         <span slot="summary" class="items-details-summary">
             <span class="items-details-summary-left">
                 <strong v-if="taskDisplayName" class="items-details-summary-name">{{ taskDisplayName.name }}<span v-if="taskDisplayName.namespace" class="items-details-summary-quiet"> ({{ taskDisplayName.namespace }})</span></strong>
@@ -638,10 +638,10 @@ function navigateToSubagent() {
                 </AppTooltip>
                 <wa-spinner :id="toolSpinnerId" class="tool-running-spinner"></wa-spinner>
             </template>
-            <!-- Edit diff stats -->
-            <span v-if="editDiffStats" class="edit-diff-stats">
-                <span class="diff-added">+{{ editDiffStats.lines_added }}</span>
-                <span class="diff-removed">-{{ editDiffStats.lines_removed }}</span>
+            <!-- File change stats (Edit / Write) -->
+            <span v-if="fileChangeStats" class="file-change-stats">
+                <span class="diff-added">+{{ fileChangeStats.lines_added }}</span>
+                <span v-if="fileChangeStats.lines_removed != null" class="diff-removed">-{{ fileChangeStats.lines_removed }}</span>
             </span>
             <!-- Tool error indicator (rightmost) -->
             <wa-icon v-if="isToolError" name="xmark" class="tool-error-icon"></wa-icon>
@@ -735,7 +735,7 @@ wa-details.with-right-part {
         font-size: 1.2em;
     }
 
-    .edit-diff-stats {
+    .file-change-stats {
         display: flex;
         gap: var(--wa-space-xs);
         font-family: var(--wa-font-mono);
