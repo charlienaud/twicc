@@ -607,8 +607,10 @@ def sync_session_items(
     stat = file_path.stat()
     file_mtime = stat.st_mtime
 
-    # If mtime hasn't changed, nothing to do
-    if session.mtime == file_mtime:
+    # If mtime hasn't changed and no new data appended, nothing to do.
+    # Check file size too: mtime has ~1s resolution, so two writes within the same second
+    # share the same mtime. Without the size check, the second write would be silently skipped.
+    if session.mtime == file_mtime and session.last_offset >= stat.st_size:
         return [], [], [], [], []
 
     with open(file_path, "r", encoding="utf-8") as f:
