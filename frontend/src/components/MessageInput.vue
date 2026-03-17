@@ -1358,6 +1358,8 @@ body.sidebar-closed .message-input-toolbar {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-m);
+    max-height: 60vh;
+    overflow-y: auto;
 }
 
 .setting-row {
