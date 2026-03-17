@@ -51,6 +51,7 @@ const extraUsageOnlyWhenNeeded = computed(() => store.isExtraUsageOnlyWhenNeeded
 const maxCachedSessions = computed(() => store.getMaxCachedSessions)
 const autoUnpinOnArchive = computed(() => store.isAutoUnpinOnArchive)
 const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
+const titleAutoApply = computed(() => store.isTitleAutoApply)
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 const terminalUseTmux = computed(() => store.isTerminalUseTmux)
 const compactSessionList = computed(() => store.isCompactSessionList)
@@ -200,6 +201,13 @@ function onAutoUnpinOnArchiveChange(event) {
  */
 function onTitleGenerationChange(event) {
     store.setTitleGenerationEnabled(event.target.checked)
+}
+
+/**
+ * Toggle title auto-apply.
+ */
+function onTitleAutoApplyChange(event) {
+    store.setTitleAutoApply(event.target.checked)
 }
 
 /**
@@ -616,15 +624,21 @@ function onPopoverShow() {
                     </div>
                 </section>
 
-                <!-- Auto Title Section -->
+                <!-- Title Suggestion Section -->
                 <section class="settings-section">
-                    <h3 class="settings-section-title">Auto title <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+                    <h3 class="settings-section-title">Title suggestion <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
                     <div class="setting-group">
                         <wa-switch
                             :checked="titleGenerationEnabled"
                             @change="onTitleGenerationChange"
                             size="small"
                         >Enabled (Haiku)</wa-switch>
+                        <wa-switch
+                            v-if="titleGenerationEnabled"
+                            :checked="titleAutoApply"
+                            @change="onTitleAutoApplyChange"
+                            size="small"
+                        >Auto-apply on new sessions</wa-switch>
                         <div v-if="titleGenerationEnabled" class="title-prompt-section">
                             <label class="setting-group-label">System prompt</label>
                             <wa-textarea

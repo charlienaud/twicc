@@ -304,6 +304,7 @@ export const CLAUDE_IN_CHROME_DISPLAY_LABELS = {
  */
 export const SYNCED_SETTINGS_KEYS = new Set([
     'titleGenerationEnabled',
+    'titleAutoApply',
     'titleSystemPrompt',
     'defaultPermissionMode',
     'alwaysApplyDefaultPermissionMode',

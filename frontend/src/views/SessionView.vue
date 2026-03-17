@@ -2,8 +2,9 @@
 import { computed, watch, ref, readonly, provide, onActivated, onDeactivated, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
+import { useSettingsStore } from '../stores/settings'
 import { useCommandRegistry } from '../composables/useCommandRegistry'
-import { killProcess } from '../composables/useWebSocket'
+import { killProcess, requestTitleSuggestion } from '../composables/useWebSocket'
 import { PROCESS_STATE } from '../constants'
 import SessionHeader from '../components/SessionHeader.vue'
 import SessionItemsList from '../components/SessionItemsList.vue'
@@ -16,6 +17,7 @@ import AppTooltip from '../components/AppTooltip.vue'
 const route = useRoute()
 const router = useRouter()
 const store = useDataStore()
+const settingsStore = useSettingsStore()
 const { registerCommands, unregisterCommands } = useCommandRegistry()
 
 // Reference to session header for opening rename dialog
@@ -436,12 +438,58 @@ watch(activeTabId, (newTabId) => {
 }, { immediate: true })
 
 /**
- * Open the rename dialog for the session.
- * Called when user sends a message from a draft session without a title.
- * Shows a contextual hint since the message is being sent in parallel.
+ * Handle a session that needs a title after sending its first message.
+ * If title auto-apply is enabled, requests a suggestion and applies it
+ * automatically when it arrives (same flow as the rename dialog's Save).
+ * Otherwise, opens the rename dialog.
  */
 function handleNeedsTitle() {
-    sessionHeaderRef.value?.openRenameDialog({ showHint: true })
+    if (settingsStore.isTitleAutoApply && settingsStore.isTitleGenerationEnabled) {
+        const sid = sessionId.value
+        const pid = projectId.value
+        const prompt = store.getDraftMessage(sid)?.message?.trim()
+        if (!prompt) return
+
+        requestTitleSuggestion(sid, prompt, settingsStore.getTitleSystemPrompt)
+
+        // Track the suggested title once received. This variable is captured by the
+        // watcher closure and survives across reactive flushes (broadcasts, etc.).
+        let pendingTitle = null
+
+        const unwatch = watch(
+            () => ({
+                suggestion: store.getTitleSuggestion(sid),
+                session: store.getSession(sid),
+            }),
+            ({ suggestion, session }) => {
+                if (!session) return
+
+                // Capture the title from the first valid suggestion
+                if (suggestion && !pendingTitle) {
+                    pendingTitle = suggestion
+                }
+
+                if (!pendingTitle) return
+
+                // Re-apply the suggested title only if the session has no title
+                // (broadcast replaced the session object without the title yet).
+                // If the session has a different non-empty title (user renamed
+                // manually, or watcher detected a custom-title), respect it.
+                if (!session.title) {
+                    session.title = pendingTitle
+                }
+
+                // Once the session is real (exists in DB), persist via API and
+                // stop watching. renameSession does optimistic update + PATCH.
+                if (!session.draft) {
+                    unwatch()
+                    store.renameSession(pid, sid, pendingTitle)
+                }
+            }
+        )
+    } else {
+        sessionHeaderRef.value?.openRenameDialog({ showHint: true })
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -21,6 +21,7 @@ const SETTINGS_SCHEMA = {
     themeMode: DEFAULT_THEME_MODE,
     sessionTimeFormat: DEFAULT_SESSION_TIME_FORMAT,
     titleGenerationEnabled: true,
+    titleAutoApply: false,
     titleSystemPrompt: DEFAULT_TITLE_SYSTEM_PROMPT,
     showCosts: true,
     extraUsageOnlyWhenNeeded: true,
@@ -71,6 +72,7 @@ const SETTINGS_VALIDATORS = {
     themeMode: (v) => [THEME_MODE.SYSTEM, THEME_MODE.LIGHT, THEME_MODE.DARK].includes(v),
     sessionTimeFormat: (v) => [SESSION_TIME_FORMAT.TIME, SESSION_TIME_FORMAT.RELATIVE_SHORT, SESSION_TIME_FORMAT.RELATIVE_NARROW].includes(v),
     titleGenerationEnabled: (v) => typeof v === 'boolean',
+    titleAutoApply: (v) => typeof v === 'boolean',
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
     showCosts: (v) => typeof v === 'boolean',
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
@@ -170,6 +172,7 @@ export const useSettingsStore = defineStore('settings', {
         getThemeMode: (state) => state.themeMode,
         getSessionTimeFormat: (state) => state.sessionTimeFormat,
         isTitleGenerationEnabled: (state) => state.titleGenerationEnabled,
+        isTitleAutoApply: (state) => state.titleAutoApply,
         getTitleSystemPrompt: (state) => state.titleSystemPrompt,
         areCostsShown: (state) => state.showCosts,
         isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,
@@ -264,6 +267,16 @@ export const useSettingsStore = defineStore('settings', {
         setTitleGenerationEnabled(enabled) {
             if (SETTINGS_VALIDATORS.titleGenerationEnabled(enabled)) {
                 this.titleGenerationEnabled = enabled
+            }
+        },
+
+        /**
+         * Toggle title auto-apply enabled/disabled.
+         * @param {boolean} enabled
+         */
+        setTitleAutoApply(enabled) {
+            if (SETTINGS_VALIDATORS.titleAutoApply(enabled)) {
+                this.titleAutoApply = enabled
             }
         },
 
@@ -630,6 +643,7 @@ export function initSettings() {
             themeMode: store.themeMode,
             sessionTimeFormat: store.sessionTimeFormat,
             titleGenerationEnabled: store.titleGenerationEnabled,
+            titleAutoApply: store.titleAutoApply,
             titleSystemPrompt: store.titleSystemPrompt,
             showCosts: store.showCosts,
             extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,
