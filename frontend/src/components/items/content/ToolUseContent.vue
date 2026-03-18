@@ -722,7 +722,8 @@ function navigateToSubagent() {
             <!-- Tool error message (shown directly, replaces the Result details unless Bash/Unknown) -->
             <wa-callout v-if="isToolError" variant="danger" appearance="outlined" class="tool-error-message">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                {{ toolErrorText }}
+                <MarkdownContent v-if="props.name === 'ExitPlanMode'" :source="toolErrorText" />
+                <template v-else>{{ toolErrorText }}</template>
             </wa-callout>
             <wa-details v-if="showResultDetails" ref="resultDetailsRef" class="tool-result" @wa-show="onResultOpen" @wa-hide="onResultClose">
                 <span slot="summary">Result</span>
