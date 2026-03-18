@@ -21,7 +21,7 @@ import queue
 import orjson
 import pytest
 
-from twicc.compute import compute_item_metadata_live
+from twicc.compute import compute_item_metadata, compute_item_metadata_live
 from twicc.compute_batch import apply_session_complete, compute_session_metadata
 from twicc.core.models import Project, Session, SessionItem
 
@@ -45,24 +45,29 @@ def make_collapsible() -> str:
 
 def make_always(prefix: bool = False, suffix: bool = False) -> str:
     """
-    Create an ALWAYS item (user message with text).
+    Create an ALWAYS item (assistant message with visible text).
+
+    Uses assistant messages because user messages containing tool_result
+    are classified as CONTENT_ITEMS/DEBUG_ONLY (not ALWAYS). Assistant
+    messages with text are ASSISTANT_MESSAGE/ALWAYS, and tool_use blocks
+    serve as collapsible prefix/suffix (they're not in VISIBLE_CONTENT_TYPES).
 
     Args:
-        prefix: If True, add a tool_result before the text (collapsible prefix)
-        suffix: If True, add a tool_result after the text (collapsible suffix)
+        prefix: If True, add a tool_use before the text (collapsible prefix)
+        suffix: If True, add a tool_use after the text (collapsible suffix)
     """
     content = []
 
     if prefix:
-        content.append({"type": "tool_result", "content": "result"})
+        content.append({"type": "tool_use", "name": "prefix_tool"})
 
     content.append({"type": "text", "text": "Hello world"})
 
     if suffix:
-        content.append({"type": "tool_result", "content": "result"})
+        content.append({"type": "tool_use", "name": "suffix_tool"})
 
     return json.dumps({
-        "type": "user",
+        "type": "assistant",
         "message": {
             "content": content
         }
@@ -155,9 +160,25 @@ def run_batch(session_id: str):
 
 
 def run_live(session_id: str, items: list[SessionItem]):
-    """Run live processing for each item in order."""
+    """Run live processing for each item in order.
+
+    Mimics the real watcher flow: first compute display_level and kind,
+    then compute group membership for COLLAPSIBLE/ALWAYS items.
+    """
+    from twicc.core.enums import ItemDisplayLevel
+
     for item in items:
-        compute_item_metadata_live(session_id, item, item.content)
+        parsed = orjson.loads(item.content)
+
+        # Step 1: Compute display_level and kind (like the watcher does)
+        metadata = compute_item_metadata(parsed)
+        item.display_level = metadata['display_level']
+        item.kind = metadata['kind']
+
+        # Step 2: Compute group membership (only for groupable items, like the watcher)
+        if item.display_level in (ItemDisplayLevel.COLLAPSIBLE, ItemDisplayLevel.ALWAYS):
+            compute_item_metadata_live(session_id, item, parsed)
+
         item.save()
 
 
