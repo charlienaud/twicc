@@ -770,6 +770,73 @@ class UsageSnapshot(models.Model):
         return self.seven_day_resets_at - timedelta(days=7)
 
 
+class SessionCron(models.Model):
+    """Persisted cron job created by a Claude session.
+
+    Saved via PostToolUse hook on CronCreate, deleted on CronDelete.
+    Survives TwiCC restarts to allow automatic rescheduling of cron jobs.
+    """
+
+    CLAUDE_RECURRING_MAX_AGE = timedelta(days=3)
+    """Maximum age of a recurring cron before it auto-expires (matches Claude CLI behavior)."""
+
+    cron_id = models.CharField(max_length=100, unique=True)
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="crons")
+    cron_expr = models.CharField(max_length=100)
+    recurring = models.BooleanField()
+    prompt = models.TextField()
+    created_at = models.DateTimeField()
+    next_fire = models.DateTimeField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["session"], name="idx_sessioncron_session"),
+        ]
+
+    def __str__(self):
+        kind = "recurring" if self.recurring else "one-shot"
+        return f"Cron {self.cron_id} ({kind}) on session {self.session_id}"
+
+    def serialize(self) -> dict:
+        """Serialize for WebSocket transmission (matches the format expected by the frontend)."""
+        return {
+            "id": self.cron_id,
+            "cron_expr": self.cron_expr,
+            "recurring": self.recurring,
+            "prompt": self.prompt,
+            "created_at": self.created_at.timestamp(),
+            "next_fire": self.next_fire.timestamp(),
+        }
+
+    @classmethod
+    def has_active_for_session(cls, session_id: str) -> bool:
+        """Check if a session has any non-expired cron jobs.
+
+        Recurring crons expire after CLAUDE_RECURRING_MAX_AGE (3 days, matching CLI behavior).
+        One-shot crons expire after their fire time passes.
+        """
+        now = datetime.now(tz=timezone.utc)
+        return cls.objects.filter(
+            session_id=session_id,
+        ).filter(
+            # Recurring: created less than 3 days ago
+            Q(recurring=True, created_at__gt=now - cls.CLAUDE_RECURRING_MAX_AGE)
+            # One-shot: fire time not yet passed
+            | Q(recurring=False, next_fire__gt=now)
+        ).exists()
+
+    @classmethod
+    def active_for_session(cls, session_id: str) -> models.QuerySet:
+        """Return the queryset of non-expired crons for a session."""
+        now = datetime.now(tz=timezone.utc)
+        return cls.objects.filter(
+            session_id=session_id,
+        ).filter(
+            Q(recurring=True, created_at__gt=now - cls.CLAUDE_RECURRING_MAX_AGE)
+            | Q(recurring=False, next_fire__gt=now)
+        )
+
+
 class SlashCommandSource(models.TextChoices):
     """Origin of a slash command."""
     COMMANDS_DIR = "commands_dir", "Commands directory"

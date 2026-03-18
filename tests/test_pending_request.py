@@ -212,6 +212,14 @@ async def _dummy_get_slug(session_id: str) -> str:
     return f"test-slug-{uuid.uuid4().hex[:8]}"
 
 
+async def _dummy_on_cron_created(session_id, cron_id, cron_expr, recurring, prompt, created_at, next_fire):
+    """No-op cron created callback for testing."""
+
+
+async def _dummy_on_cron_deleted(session_id, cron_id):
+    """No-op cron deleted callback for testing."""
+
+
 def _make_claude_process() -> ClaudeProcess:
     """Create a ClaudeProcess for testing, without starting it."""
     return ClaudeProcess(
@@ -223,6 +231,8 @@ def _make_claude_process() -> ClaudeProcess:
         effort=None,
         thinking_enabled=None,
         get_last_session_slug=_dummy_get_slug,
+        on_cron_created=_dummy_on_cron_created,
+        on_cron_deleted=_dummy_on_cron_deleted,
     )
 
 
@@ -751,6 +761,7 @@ def _make_manager_with_process(
         session_id, "test-project", "/tmp/test",
         permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
         get_last_session_slug=_dummy_get_slug,
+        on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
     )
     process.state = state
     process._state_change_callback = AsyncMock()
@@ -841,6 +852,7 @@ class TestManagerResolvePendingRequest:
                 "session-1", "project-1", "/tmp/test",
                 permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
                 get_last_session_slug=_dummy_get_slug,
+                on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
             )
             process1.state = ProcessState.ASSISTANT_TURN
             process1._state_change_callback = AsyncMock()
@@ -851,6 +863,7 @@ class TestManagerResolvePendingRequest:
                 "session-2", "project-1", "/tmp/test",
                 permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
                 get_last_session_slug=_dummy_get_slug,
+                on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
             )
             process2.state = ProcessState.ASSISTANT_TURN
             process2._state_change_callback = AsyncMock()
@@ -946,6 +959,7 @@ class TestTimeoutExemptionForPendingRequest:
                 "session-1", "project-1", "/tmp/test",
                 permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
                 get_last_session_slug=_dummy_get_slug,
+                on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
             )
             process1.state = ProcessState.ASSISTANT_TURN
             process1._state_change_callback = AsyncMock()
@@ -959,6 +973,7 @@ class TestTimeoutExemptionForPendingRequest:
                 "session-2", "project-1", "/tmp/test",
                 permission_mode="default", selected_model=None, effort=None, thinking_enabled=None,
                 get_last_session_slug=_dummy_get_slug,
+                on_cron_created=_dummy_on_cron_created, on_cron_deleted=_dummy_on_cron_deleted,
             )
             process2.state = ProcessState.ASSISTANT_TURN
             process2._state_change_callback = AsyncMock()

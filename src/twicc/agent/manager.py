@@ -308,6 +308,8 @@ class ProcessManager:
             effort=effort,
             thinking_enabled=thinking_enabled,
             get_last_session_slug=get_last_session_slug,
+            on_cron_created=self._on_cron_created,
+            on_cron_deleted=self._on_cron_deleted,
             claude_in_chrome=claude_in_chrome,
             context_max=context_max,
         )
@@ -587,8 +589,15 @@ class ProcessManager:
 
             # Don't timeout processes with active cron jobs — the CLI has
             # scheduled work pending that would be lost if we kill the process.
-            if process.has_active_crons:
-                continue
+            try:
+                from twicc.core.models import SessionCron
+                has_crons = await asyncio.to_thread(
+                    lambda sid=session_id: SessionCron.has_active_for_session(sid)
+                )
+                if has_crons:
+                    continue
+            except Exception as e:
+                logger.error("Error checking active crons for session %s: %s", session_id, e)
 
             timeout: int | None = None
             reason: str | None = None
@@ -646,6 +655,55 @@ class ProcessManager:
                     killed.append(session_id)
 
         return killed
+
+    async def _on_cron_created(
+        self,
+        session_id: str,
+        cron_id: str,
+        cron_expr: str,
+        recurring: bool,
+        prompt: str,
+        created_at: "datetime",
+        next_fire: "datetime",
+    ) -> None:
+        """Persist a newly created cron job to the database and broadcast the update."""
+        from twicc.core.models import SessionCron
+
+        await asyncio.to_thread(
+            lambda: SessionCron.objects.create(
+                cron_id=cron_id,
+                session_id=session_id,
+                cron_expr=cron_expr,
+                recurring=recurring,
+                prompt=prompt,
+                created_at=created_at,
+                next_fire=next_fire,
+            )
+        )
+        logger.info("Persisted cron %s for session %s", cron_id, session_id)
+        await self._broadcast_process_state(session_id)
+
+    async def _on_cron_deleted(self, session_id: str, cron_id: str) -> None:
+        """Delete a cron job from the database and broadcast the update."""
+        from twicc.core.models import SessionCron
+
+        deleted, _ = await asyncio.to_thread(
+            lambda: SessionCron.objects.filter(cron_id=cron_id).delete()
+        )
+        if deleted:
+            logger.info("Deleted cron %s for session %s", cron_id, session_id)
+        else:
+            logger.debug("Cron %s not found in DB for session %s (may already be deleted)", cron_id, session_id)
+        await self._broadcast_process_state(session_id)
+
+    async def _broadcast_process_state(self, session_id: str) -> None:
+        """Trigger a process state broadcast for a session (used after cron changes)."""
+        process = self._processes.get(session_id)
+        if process and self._broadcast_callback:
+            try:
+                await self._broadcast_callback(process.get_info())
+            except Exception as e:
+                logger.error("Error broadcasting process state for session %s: %s", session_id, e)
 
     async def _on_state_change(self, process: ClaudeProcess) -> None:
         """Handle process state change by cleaning up dead processes and broadcasting.
