@@ -260,11 +260,26 @@ const inputOverrides = computed(() => INPUT_OVERRIDES[props.name] ?? {})
 
 // --- Tool result JHV overrides ---
 // Force specific valueType for certain tool result keys (prevents markdown auto-detection).
-const RESULT_OVERRIDES = {
-    Bash: { content: { valueType: 'string-multiline' } },
-}
+const RESULT_OVERRIDES = {}
 
 const resultOverrides = computed(() => RESULT_OVERRIDES[props.name] ?? {})
+
+// --- Bash/WebFetch/WebSearch: direct content display (bypass JsonHumanView) ---
+const DIRECT_CONTENT_TOOLS = new Set(['Bash', 'WebFetch', 'WebSearch'])
+const isDirectContentTool = computed(() => DIRECT_CONTENT_TOOLS.has(props.name))
+
+const directContentSource = computed(() => {
+    if (!isDirectContentTool.value || !displayResult.value) return null
+    const result = displayResult.value
+    const content = typeof result === 'string' ? result : result?.content
+    if (typeof content !== 'string' || !content) return null
+
+    if (props.name === 'Bash') {
+        return '```\n' + content + '\n```'
+    }
+    // WebFetch, WebSearch: content is already markdown
+    return content
+})
 
 // --- Read tool: syntax-highlighted result ---
 
@@ -747,6 +762,10 @@ function navigateToSubagent() {
                             <div class="read-result-header">Lines {{ readResultCode.startLine }}–{{ readResultCode.endLine }}</div>
                             <MarkdownContent :source="readResultCode.markdownSource" />
                         </template>
+                        <MarkdownContent
+                            v-else-if="directContentSource"
+                            :source="directContentSource"
+                        />
                         <JsonHumanView
                             v-else
                             :value="displayResult"
@@ -888,6 +907,14 @@ wa-details {
     font-size: var(--wa-font-size-2xs);
     margin-left: var(--wa-space-3xs);
     opacity: 0.6;
+}
+
+/* Hide the "BASH" language label for tool inputs (used for bash tools, so it's always bash) */
+.tool-input > .jhv-node :deep(pre.shiki[data-language="bash"]) {
+    padding-top: 16px;
+}
+.tool-input > .jhv-node :deep(pre.shiki[data-language="bash"]::before) {
+    display: none;
 }
 
 .tool-input {
