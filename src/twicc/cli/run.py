@@ -135,6 +135,7 @@ async def run_server(port: int):
         "compute_ctx": None,
         "price_sync_task": None,
         "search_indexing_task": None,
+        "cron_restart_task": None,
     }
 
     # --- Initial sync task ---
@@ -201,6 +202,12 @@ async def run_server(port: int):
         deferred["watcher_task"] = asyncio.create_task(start_watcher())
         deferred["watcher_task"].add_done_callback(_on_watcher_done)
         logger.info("Watcher started (after initial sync)")
+
+        # Restart cron jobs from previous process runs.
+        # Must run after watcher is up so that JSONL writes from restarted sessions are detected.
+        from twicc.cron_restart import restart_all_session_crons
+        deferred["cron_restart_task"] = asyncio.create_task(restart_all_session_crons())
+        logger.info("Cron restart task launched")
 
         # Start background compute and periodic price sync once initial price sync is done.
         # The periodic price sync task must wait for the initial price sync to avoid
@@ -318,6 +325,10 @@ async def run_server(port: int):
             logger.info("Search index task was not started, skipping")
         logger.info("Shutting down search index...")
         await asyncio.to_thread(shutdown_search_index)
+
+        # Clean shutdown of cron restart task (may still be retrying)
+        if deferred["cron_restart_task"] is not None:
+            await _cancel_task(deferred["cron_restart_task"], "Cron restart")
 
         # Clean shutdown of Claude processes (also stops the internal timeout monitor)
         # This gracefully terminates any active Claude SDK processes

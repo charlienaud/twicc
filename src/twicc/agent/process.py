@@ -132,6 +132,12 @@ class ClaudeProcess:
         self._on_cron_created = on_cron_created
         self._on_cron_deleted = on_cron_deleted
 
+        # ProcessRun lifecycle tracking
+        self._first_turn_done_event = asyncio.Event()  # Set on first USER_TURN or DEAD
+        self._first_user_turn_reached = False           # True only if USER_TURN was reached (not DEAD)
+        self._old_runs_purged = False                   # True after old ProcessRuns are purged at first USER_TURN
+        self.process_run = None                         # ProcessRun model instance, set by ProcessManager
+
         logger.debug(
             "ClaudeProcess created for session %s, project %s, cwd=%s, permission_mode=%s, model=%s, effort=%s, thinking=%s, chrome=%s, context_max=%s",
             session_id,
@@ -942,6 +948,7 @@ class ClaudeProcess:
         # Update state
         self._set_state(ProcessState.DEAD)
         self.last_activity = time.time()
+        self._first_turn_done_event.set()  # Unblock any waiters (cron restart)
         await self._notify_state_change()
 
     async def _run_message_loop(self) -> None:
@@ -977,6 +984,11 @@ class ClaudeProcess:
                             f"Claude reported error: {msg.result or 'Unknown error'}"
                         )
                         return
+
+                    # Signal first USER_TURN for ProcessRun lifecycle
+                    if not self._first_user_turn_reached:
+                        self._first_user_turn_reached = True
+                        self._first_turn_done_event.set()
 
                     self._set_state(ProcessState.USER_TURN)
                     await self._notify_state_change()
@@ -1019,6 +1031,7 @@ class ClaudeProcess:
         self.error = error_message
         self.kill_reason = "error"
         self.last_activity = time.time()
+        self._first_turn_done_event.set()  # Unblock any waiters (cron restart)
 
         await self._notify_state_change()
 

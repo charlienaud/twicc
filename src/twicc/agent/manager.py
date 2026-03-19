@@ -317,8 +317,20 @@ class ProcessManager:
 
         # Update lifecycle timestamps: every process start (new or resume) is a session start
         from django.utils import timezone as dj_timezone
-        from twicc.core.models import Session
+        from twicc.core.models import ProcessRun as ProcessRunModel, Session
         now = dj_timezone.now()
+
+        # Create ProcessRun in DB and attach to process.
+        # session_id is a plain CharField (not FK), so this works even for new sessions
+        # that don't have a Session row yet.
+        process_run = await asyncio.to_thread(
+            lambda: ProcessRunModel.objects.create(
+                session_id=session_id,
+                started_at=now,
+            )
+        )
+        process.process_run = process_run
+
         await asyncio.to_thread(
             lambda: Session.objects.filter(id=session_id).update(
                 last_started_at=now, last_updated_at=now
@@ -669,10 +681,15 @@ class ProcessManager:
         """Persist a newly created cron job to the database and broadcast the update."""
         from twicc.core.models import SessionCron
 
+        # Associate cron with the current process run (if any)
+        process = self._processes.get(session_id)
+        process_run = process.process_run if process else None
+
         await asyncio.to_thread(
             lambda: SessionCron.objects.create(
                 cron_id=cron_id,
                 session_id=session_id,
+                process_run=process_run,
                 cron_expr=cron_expr,
                 recurring=recurring,
                 prompt=prompt,
@@ -680,7 +697,10 @@ class ProcessManager:
                 next_fire=next_fire,
             )
         )
-        logger.info("Persisted cron %s for session %s", cron_id, session_id)
+        logger.info(
+            "Persisted cron %s for session %s (process run: %s)",
+            cron_id, session_id, process_run.pk if process_run else None,
+        )
         await self._broadcast_process_state(session_id)
 
     async def _on_cron_deleted(self, session_id: str, cron_id: str) -> None:
@@ -739,6 +759,32 @@ class ProcessManager:
             except Exception as e:
                 logger.error("Error broadcasting state change: %s", e)
 
+        # First USER_TURN: purge old ProcessRuns for this session (cascade deletes their crons).
+        # Uses _old_runs_purged flag because _first_user_turn_reached is already True at this point
+        # (set in _run_message_loop before _notify_state_change is called).
+        # Systematic for all processes — no-op if no old process runs exist (DELETE affects 0 rows).
+        if (
+            process.state == ProcessState.USER_TURN
+            and not process._old_runs_purged
+            and process.process_run is not None
+        ):
+            process._old_runs_purged = True
+            current_run_id = process.process_run.pk
+            try:
+                from twicc.core.models import ProcessRun as ProcessRunModel
+                deleted_count, _ = await asyncio.to_thread(
+                    lambda: ProcessRunModel.objects.filter(
+                        session_id=process.session_id
+                    ).exclude(pk=current_run_id).delete()
+                )
+                if deleted_count:
+                    logger.info(
+                        "Purged %d old process run(s) for session %s (current: %s)",
+                        deleted_count, process.session_id, current_run_id,
+                    )
+            except Exception as e:
+                logger.error("Error purging old process runs for session %s: %s", process.session_id, e)
+
         # Flush pending title when process becomes safe to write.
         # We add a small delay to let Claude CLI finish flushing its own I/O
         # buffers to the JSONL file — the ResultMessage arrives via the SDK stream
@@ -789,6 +835,34 @@ class ProcessManager:
 
             except Exception as e:
                 logger.error("Error updating last_stopped_at for session %s: %s", process.session_id, e)
+
+            # ProcessRun lifecycle cleanup on process death
+            if process.process_run is not None:
+                should_delete_run = False
+
+                if process.kill_reason == "manual":
+                    # User explicitly stopped → delete process run (cascade deletes crons)
+                    should_delete_run = True
+                elif not process._first_user_turn_reached:
+                    # Died before first USER_TURN (failed cron restart, early crash, etc.)
+                    # Delete current process run to discard partial crons, keep old runs for retry
+                    should_delete_run = True
+                else:
+                    # Died after USER_TURN (old runs already purged). Keep only if it has crons.
+                    has_crons = await asyncio.to_thread(lambda: process.process_run.crons.exists())
+                    if not has_crons:
+                        should_delete_run = True
+
+                if should_delete_run:
+                    try:
+                        run_pk = process.process_run.pk
+                        await asyncio.to_thread(lambda: process.process_run.delete())
+                        logger.info(
+                            "Deleted process run %s for session %s (kill_reason=%s, user_turn_reached=%s)",
+                            run_pk, process.session_id, process.kill_reason, process._first_user_turn_reached,
+                        )
+                    except Exception as e:
+                        logger.error("Error deleting process run for session %s: %s", process.session_id, e)
 
         # Clean up dead processes. No lock needed - see docstring for concurrency model.
         if process.state == ProcessState.DEAD:

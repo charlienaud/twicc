@@ -770,18 +770,46 @@ class UsageSnapshot(models.Model):
         return self.seven_day_resets_at - timedelta(days=7)
 
 
+class ProcessRun(models.Model):
+    """Tracks a Claude process execution for cron lifecycle management.
+
+    Each ClaudeProcess gets a ProcessRun row when created. SessionCron rows
+    reference their ProcessRun via CASCADE — deleting a process run deletes its crons.
+    Orphan process runs (from crashed TwiCC instances) are detected and handled at startup.
+
+    Uses a plain CharField for session_id (not a FK) because new sessions may not
+    exist in the Session table yet when the process starts — the Session row is created
+    asynchronously by the file watcher when the JSONL file appears.
+    """
+
+    session_id = models.CharField(max_length=200)
+    started_at = models.DateTimeField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["session_id"], name="idx_processrun_session"),
+        ]
+
+    def __str__(self):
+        return f"ProcessRun {self.pk} for session {self.session_id}"
+
+
 class SessionCron(models.Model):
     """Persisted cron job created by a Claude session.
 
     Saved via PostToolUse hook on CronCreate, deleted on CronDelete.
     Survives TwiCC restarts to allow automatic rescheduling of cron jobs.
+
+    Uses a plain CharField for session_id (not a FK) for the same reason as ProcessRun:
+    new sessions may not exist in the Session table yet when a cron is created.
     """
 
     CLAUDE_RECURRING_MAX_AGE = timedelta(days=3)
     """Maximum age of a recurring cron before it auto-expires (matches Claude CLI behavior)."""
 
     cron_id = models.CharField(max_length=100, unique=True)
-    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="crons")
+    session_id = models.CharField(max_length=200)
+    process_run = models.ForeignKey(ProcessRun, on_delete=models.CASCADE, related_name="crons", null=True, blank=True)
     cron_expr = models.CharField(max_length=100)
     recurring = models.BooleanField()
     prompt = models.TextField()
@@ -790,7 +818,7 @@ class SessionCron(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=["session"], name="idx_sessioncron_session"),
+            models.Index(fields=["session_id"], name="idx_sessioncron_session"),
         ]
 
     def __str__(self):
