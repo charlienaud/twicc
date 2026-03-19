@@ -35,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Draft session stayed in draft state for seconds or minutes after sending, until the SDK wrote the user message to JSONL
 - WebSocket reconnection now re-fetches tool states and agent links for changed sessions
 - Mobile: layout no longer breaks when the browser chrome (address bar) hides/shows during scrolling
+- Set SDK `max_buffer_size` to 10 MB to prevent crashes on large tool outputs (e.g. screenshots)
 
 ## [1.1.2] - 2026-03-09
 

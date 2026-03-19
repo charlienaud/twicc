@@ -756,6 +756,7 @@ class ClaudeProcess:
                     "PostToolUse": [HookMatcher(matcher="CronCreate|CronDelete", hooks=[_on_cron_tool])],
                 },
                 stderr=self._log_stderr,
+                max_buffer_size=10 * 1024 * 1024,  # 10 MB — prevent crashes on large tool outputs
                 extra_args={
                     "chrome": None
                 } if self.claude_in_chrome else {
