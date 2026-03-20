@@ -40,9 +40,13 @@ function applyHighlights(el, terms) {
     const pattern = terms.map(escapeRegex).filter(Boolean).join('|')
     if (!pattern) return
 
-    // Use word boundaries (\b) to match whole words only, consistent with
-    // Tantivy's token-level matching (SimpleTokenizer splits on word boundaries)
-    const regex = new RegExp(`\\b(${pattern})\\b`, 'gi')
+    // Use Unicode-aware word boundaries via \p{L} (any letter) and \p{N} (any
+    // digit) property escapes, so accented characters, Cyrillic, CJK, etc. are
+    // treated as word characters — consistent with Tantivy's SimpleTokenizer
+    // which splits on Unicode word boundaries (UAX #29).
+    // Unlike \b (which only knows [a-zA-Z0-9_]), this correctly handles e.g.
+    // "café", "naïve", underscores as separators, and non-Latin scripts.
+    const regex = new RegExp(`(?<=^|[^\\p{L}\\p{N}])(${pattern})(?=$|[^\\p{L}\\p{N}])`, 'giu')
 
     // Collect all text nodes first to avoid live-mutation issues
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
