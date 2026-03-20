@@ -25,11 +25,13 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from django.db.models import Q
 
-from twicc.compute import load_project_directories, load_project_git_roots
-from twicc.compute_batch import apply_session_complete
-from twicc.core.models import Project, Session, SessionType
-from twicc.core.serializers import serialize_project, serialize_session
 from twicc.startup_progress import broadcast_startup_progress
+
+# NOTE: Django model imports (twicc.core.models, twicc.compute, twicc.compute_batch,
+# twicc.core.serializers) are intentionally NOT imported at module level.
+# On macOS, multiprocessing uses "spawn" mode, which re-imports this module in
+# the child process before django.setup() runs. Top-level model imports would
+# trigger AppRegistryNotReady. All such imports are done inside functions instead.
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +208,9 @@ def start_compute_process(ctx: ComputeContext) -> None:
 
 async def _handle_compute_done(session_id: str) -> None:
     """Handle completion of a session compute - broadcast updates."""
+    from twicc.core.models import Project, Session
+    from twicc.core.serializers import serialize_project, serialize_session
+
     try:
         session = await sync_to_async(Session.objects.get)(id=session_id)
 
@@ -281,6 +286,8 @@ async def consume_compute_results(
 
     from collections import defaultdict
     from datetime import date as date_cls
+
+    from twicc.compute_batch import apply_session_complete
 
     try:
         # Accumulate affected days per project across multiple sessions
@@ -392,6 +399,9 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
 
     Progress logging: Logs progress at 10% intervals during processing.
     """
+
+    from twicc.compute import load_project_directories, load_project_git_roots
+    from twicc.core.models import Session, SessionType
 
     # Count sessions needing computation
     total_to_compute = await sync_to_async(Session.objects.exclude(
