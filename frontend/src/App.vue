@@ -234,6 +234,13 @@ body {
     --sparkline-red-gradient-color-3: #d63333;
     --sparkline-red-gradient-color-4: #8b1a1a;
     --sparkline-red-stroke-color: #f77070;
+
+    /* Diff editor colors (light mode) */
+    --diff-removedLineBackground: #FEF1F1;
+    --diff-removedTextBackground: #FFC4C3;
+    --diff-insertedLineBackground: #C0FFD8;
+    --diff-insertedTextBackground: #A7E9B8;
+    --diff-selectionBackground: #BBDFFF99;
 }
 
 .wa-dark {
@@ -268,6 +275,13 @@ body {
     --sparkline-red-gradient-color-3: #d44040;
     --sparkline-red-gradient-color-4: #f77070;
     --sparkline-red-stroke-color: #f77070;
+
+    /* Diff editor colors (dark mode) */
+    --diff-removedLineBackground: #451B1B;
+    --diff-removedTextBackground: #5E1B1B;
+    --diff-insertedLineBackground: #1B452B;
+    --diff-insertedTextBackground: #2A573B;
+    --diff-selectionBackground: #003d7399;
 }
 
 /* Reset Web Awesome button styles inside Notivue notifications */

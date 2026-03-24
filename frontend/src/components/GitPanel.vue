@@ -435,10 +435,22 @@ watch(displayTree, (tree) => {
     if (tree) {
         const firstFilePath = findFirstFile(tree)
         if (firstFilePath) {
+            // Reset selection first so the selectedFile watcher fires even if
+            // the same file path is re-selected (e.g. switching commits where
+            // both have the same file).
+            if (fileTreePanelRef.value) {
+                fileTreePanelRef.value.selectedFile = null
+            }
             nextTick(() => {
                 fileTreePanelRef.value?.onFileSelect(firstFilePath)
             })
         }
+    } else {
+        // Tree is empty/null: clear stale selection and diff data
+        if (fileTreePanelRef.value) {
+            fileTreePanelRef.value.selectedFile = null
+        }
+        diffData.value = null
     }
 })
 
@@ -447,23 +459,40 @@ watch(displayTree, (tree) => {
  * Lightweight alternative to re-fetching the entire git log.
  */
 async function refreshIndexFiles() {
-    commitFilesLoading.value = true
+    // Only show loading state if we have no data yet — avoids flashing
+    // the tree empty when refreshing with existing content visible.
+    const isInitialLoad = !indexFilesData.value
+    if (isInitialLoad) commitFilesLoading.value = true
+    let treeChanged = false
     try {
         const url = appendGitDir(`${apiPrefix.value}/git-index-files/`)
         const res = await apiFetch(url)
         if (res.ok) {
             const data = await res.json()
-            indexFilesData.value = data || null
+            const newData = data || null
+            // Only update the ref if the data actually changed — avoids
+            // unnecessary re-renders of the file tree when nothing changed.
+            if (JSON.stringify(newData) !== JSON.stringify(indexFilesData.value)) {
+                indexFilesData.value = newData
+                treeChanged = true
+            }
         }
     } catch {
         // Silently ignore — index data just stays stale
     } finally {
-        commitFilesLoading.value = false
+        if (isInitialLoad) commitFilesLoading.value = false
     }
 
     // Re-fetch the diff for the currently selected file (if any)
     if (selectedFile.value) {
         fetchDiff(selectedFile.value)
+        // Scroll to the selected file so it's visible after tree refresh
+        if (treeChanged) {
+            await nextTick()
+            if (selectedFilePath.value) {
+                fileTreePanelRef.value?.scrollToPath(selectedFilePath.value)
+            }
+        }
     }
 }
 
@@ -473,11 +502,21 @@ async function refreshIndexFiles() {
 
 const diffData = ref(null)        // { original, modified, binary, error }
 const diffLoading = ref(false)
+const diffLoadingVisible = ref(false)  // delayed: only true after 500ms of diffLoading
+let _diffLoadingTimer = null
 const diffError = ref(null)
 
-// Persist word-wrap and side-by-side toggle state across FilePane destruction/recreation.
-// FilePane is destroyed on every file switch (v-else-if + diffLoading gate), so local
-// toggle state would be lost. We maintain it here and pass it via props.
+watch(diffLoading, (loading) => {
+    if (loading) {
+        _diffLoadingTimer = setTimeout(() => { diffLoadingVisible.value = true }, 500)
+    } else {
+        clearTimeout(_diffLoadingTimer)
+        diffLoadingVisible.value = false
+    }
+})
+
+// Persist word-wrap and side-by-side toggle state.
+// Maintained here so the settings survive across different files.
 const diffWordWrap = ref(settingsStore.isEditorWordWrap)
 const diffSideBySide = ref(settingsStore.isDiffSideBySide)
 
@@ -494,9 +533,13 @@ const selectedFilePath = computed(() => {
 async function fetchDiff(file) {
     if (!file) {
         diffData.value = null
+        diffLoading.value = false
+        diffError.value = null
         return
     }
 
+    // Set loading flag but do NOT clear diffData — the editor stays visible
+    // with its current content while the new diff loads in the background.
     diffLoading.value = true
     diffError.value = null
 
@@ -513,12 +556,18 @@ async function fetchDiff(file) {
 
         if (!res.ok || data.error) {
             diffError.value = data.error || 'Failed to load diff'
+            diffData.value = null
             return
         }
 
-        diffData.value = data
+        // Only update if the diff content actually changed — avoids
+        // unnecessary MergeView destroy/recreate when nothing changed.
+        if (data.original !== diffData.value?.original || data.modified !== diffData.value?.modified || data.binary !== diffData.value?.binary) {
+            diffData.value = data
+        }
     } catch {
         diffError.value = 'Network error'
+        diffData.value = null
     } finally {
         diffLoading.value = false
     }
@@ -636,7 +685,10 @@ async function refreshGitLog() {
         entries.value = data.entries || []
         currentBranch.value = data.current_branch || ''
         headCommitHash.value = data.head_commit_hash || ''
-        indexFilesData.value = data.index_files || null
+        const newIndexFiles = data.index_files || null
+        if (JSON.stringify(newIndexFiles) !== JSON.stringify(indexFilesData.value)) {
+            indexFilesData.value = newIndexFiles
+        }
         hasMore.value = data.has_more || false
         branches.value = data.branches || []
     } catch {
@@ -730,12 +782,13 @@ watch(
             // Re-select the file in the tree panel (builds the full path)
             const rootPath = tree.name
             const fullPath = rootPath ? `${rootPath}/${previousFile}` : previousFile
-            nextTick(() => {
-                fileTreePanelRef.value?.onFileSelect(fullPath)
-            })
+            await nextTick()
+            fileTreePanelRef.value?.onFileSelect(fullPath)
+            await nextTick()
+            fileTreePanelRef.value?.scrollToPath(fullPath)
         } else if (!tree || !findFirstFile(tree)) {
             // Tree is empty or null (e.g. no uncommitted changes left):
-            // clear stale diff data so Monaco doesn't show old content.
+            // clear stale diff data so the editor doesn't show old content.
             diffData.value = null
         }
     },
@@ -947,13 +1000,8 @@ onMounted(() => {
 
                 <div ref="contentOwnerRef" class="reparent-owner">
                     <div class="git-content-inner">
-                        <!-- Loading diff -->
-                        <div v-if="diffLoading" class="panel-placeholder">
-                            <wa-spinner></wa-spinner>
-                        </div>
-
                         <!-- Diff error -->
-                        <div v-else-if="diffError" class="panel-placeholder">
+                        <div v-if="diffError" class="panel-placeholder">
                             <wa-callout variant="danger" size="small">
                                 {{ diffError }}
                             </wa-callout>
@@ -964,7 +1012,8 @@ onMounted(() => {
                             Binary file cannot be diffed
                         </div>
 
-                        <!-- Diff viewer (Monaco diff editor via FilePane) -->
+                        <!-- Diff viewer (CodeMirror diff editor via FilePane) -->
+                        <!-- Kept mounted: content updates in-place via prop changes, no destroy/recreate -->
                         <FilePane
                             v-else-if="selectedFile && diffData"
                             :project-id="projectId"
@@ -985,6 +1034,16 @@ onMounted(() => {
                         <!-- No file selected / no changes -->
                         <div v-else-if="!selectedFile" class="panel-placeholder">
                             {{ !displayTree ? 'No changes' : 'Select a file' }}
+                        </div>
+
+                        <!-- Loading overlay (shown on top of existing content) -->
+                        <div v-if="diffLoadingVisible && selectedFile && diffData" class="diff-loading-overlay">
+                            <wa-spinner></wa-spinner>
+                        </div>
+
+                        <!-- Initial loading (no content yet) -->
+                        <div v-else-if="diffLoadingVisible && !diffData" class="panel-placeholder">
+                            <wa-spinner></wa-spinner>
                         </div>
                     </div>
                 </div>
@@ -1250,6 +1309,18 @@ wa-callout {
     height: 100%;
     display: flex;
     flex-direction: column;
+    position: relative;
+}
+
+.diff-loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    xbackground: color-mix(in srgb, var(--wa-color-surface-default) 60%, transparent);
+    z-index: 1;
+    pointer-events: none;
 }
 
 /* ----- Git log overlay (absolute over content) ----- */

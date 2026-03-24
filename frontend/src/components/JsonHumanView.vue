@@ -10,7 +10,7 @@
 // - boolean → native checkbox
 // - number → wa-input[type=number]
 // - string (single-line) → wa-input
-// - string (multi-line/markdown/code) → Monaco editor (with language detection)
+// - string (multi-line/markdown/code) → CodeMirror editor (with language detection)
 // - null → not editable (displayed as-is)
 // - object/array → recursive editing of children
 // Changes propagate upward via update:value emit.
@@ -19,15 +19,14 @@
 // with predefined options. Always interactive regardless of the editable prop.
 // Override shape: { valueType: 'select', options: ['opt1', 'opt2', ...] }
 
-import { computed, reactive, watch } from 'vue'
-import { useMonaco, DiffEditor as VueMonacoDiffEditor } from '@guolao/vue-monaco-editor'
+import { computed, reactive } from 'vue'
+import { EditorView } from '@codemirror/view'
 import MarkdownContent from './MarkdownContent.vue'
+import CodeEditor from './CodeEditor.vue'
+import DiffEditor from './DiffEditor.vue'
 import { getIconUrl, getFileIconId } from '../utils/fileIcons'
 import { getLanguageFromPath } from '../utils/languages'
 import { structuredPatch } from 'diff'
-import { useSettingsStore } from '../stores/settings'
-import githubDark from '../assets/monaco-themes/github-dark.json'
-import githubLight from '../assets/monaco-themes/github-light.json'
 
 defineOptions({ name: 'JsonHumanView' })
 
@@ -60,48 +59,8 @@ const props = defineProps({
 const emit = defineEmits(['update:value'])
 
 // ============================================================================
-// Monaco editor setup (only used in editable mode for multiline strings)
+// CodeMirror editor setup (only used in editable mode for multiline strings)
 // ============================================================================
-
-const settingsStore = useSettingsStore()
-const { monacoRef } = useMonaco()
-
-// Register Monaco themes (same as FilePane — Monaco is a singleton so themes are shared)
-watch(monacoRef, (monaco) => {
-    if (!monaco) return
-    monaco.editor.defineTheme('github-dark', {
-        ...githubDark,
-        colors: {
-            ...githubDark.colors,
-            'editor.background': '#1b2733',  // var(--wa-color-surface-default) on dark mode
-        },
-    })
-    monaco.editor.defineTheme('github-light', githubLight)
-}, { immediate: true })
-
-const monacoTheme = computed(() =>
-    settingsStore.getEffectiveTheme === 'dark' ? 'github-dark' : 'github-light'
-)
-
-/** Shared Monaco editor options for inline editing (compact, no chrome). */
-const monacoEditOptions = {
-    minimap: { enabled: false },
-    scrollBeyondLastLine: false,
-    lineNumbers: 'off',
-    glyphMargin: false,
-    folding: true,
-    lineDecorationsWidth: 0,
-    lineNumbersMinChars: 0,
-    renderLineHighlight: 'line',
-    overviewRulerLanes: 0,
-    hideCursorInOverviewRuler: true,
-    overviewRulerBorder: false,
-    scrollbar: { vertical: 'auto', horizontal: 'auto', verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-    automaticLayout: true,
-    wordWrap: 'on',
-    padding: { top: 16, bottom: 16 },
-    tabSize: 4,
-}
 
 /**
  * Compute the editor height in pixels based on line count.
@@ -109,13 +68,12 @@ const monacoEditOptions = {
  * @param {string} content
  * @returns {string} CSS height value (e.g. '180px')
  */
-function monacoHeight(content) {
+function editorHeight(content) {
     const lineCount = (content || '').split('\n').length
-    const lineHeight = 19 // default Monaco line height
-    const padding = 32 // top + bottom padding
+    const lineHeight = 20  // CM6 default
+    const padding = 32
     const raw = lineCount * lineHeight + padding
-    const clamped = Math.max(64, Math.min(raw, 800))
-    return clamped + 'px'
+    return Math.max(64, Math.min(raw, 800)) + 'px'
 }
 
 /**
@@ -125,96 +83,34 @@ function monacoHeight(content) {
  * @param {string} newStr
  * @returns {string} CSS height value
  */
-function monacoDiffHeight(oldStr, newStr) {
+function diffEditorHeight(oldStr, newStr) {
     const oldLines = (oldStr || '').split('\n').length
     const newLines = (newStr || '').split('\n').length
     const lineCount = Math.max(oldLines, newLines)
-    const lineHeight = 19
+    const lineHeight = 20
     const padding = 32
     const raw = lineCount * lineHeight + padding
-    const clamped = Math.max(80, Math.min(raw, 500))
-    return clamped + 'px'
+    return Math.max(80, Math.min(raw, 500)) + 'px'
 }
 
-/** Shared Monaco diff editor options (read-only original, editable modified). */
-const monacoDiffOptions = {
-    minimap: { enabled: false },
-    scrollBeyondLastLine: false,
-    lineNumbers: 'off',
-    glyphMargin: false,
-    folding: true,
-    lineDecorationsWidth: 0,
-    lineNumbersMinChars: 0,
-    renderLineHighlight: 'line',
-    overviewRulerLanes: 0,
-    overviewRulerBorder: false,
-    scrollbar: { vertical: 'auto', horizontal: 'auto', verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-    automaticLayout: true,
-    wordWrap: 'on',
-    padding: { top: 16, bottom: 16 },
-    tabSize: 4,
-    originalEditable: false,
-    readOnly: false,
-    renderSideBySide: true,
-}
-
-// Map shiki language identifiers (used by siblingOverrides/getLanguageFromPath) to Monaco equivalents.
-// Monaco uses different identifiers for some languages. This mapping ensures correct highlighting
-// both via the `language` prop and via model path extension auto-detection.
-// Format: { shikiId: [monacoId, extension] }
-// When shikiId IS a valid Monaco id, monacoId can be the same value.
-const SHIKI_TO_MONACO = {
-    javascript: ['javascript', 'js'], typescript: ['typescript', 'ts'],
-    jsx: ['javascript', 'jsx'], tsx: ['typescript', 'tsx'],
-    python: ['python', 'py'], rust: ['rust', 'rs'], go: ['go', 'go'],
-    java: ['java', 'java'], kotlin: ['kotlin', 'kt'],
-    c: ['c', 'c'], cpp: ['cpp', 'cpp'], csharp: ['csharp', 'cs'],
-    'objective-c': ['objective-c', 'm'],
-    swift: ['swift', 'swift'], ruby: ['ruby', 'rb'], php: ['php', 'php'],
-    bash: ['shell', 'sh'], zsh: ['shell', 'sh'],
-    lua: ['lua', 'lua'], perl: ['perl', 'pl'], scala: ['scala', 'scala'],
-    haskell: ['plaintext', 'hs'], elixir: ['plaintext', 'ex'],
-    erlang: ['plaintext', 'erl'], zig: ['plaintext', 'zig'],
-    dart: ['dart', 'dart'], clojure: ['clojure', 'clj'],
-    r: ['r', 'r'], sql: ['sql', 'sql'], graphql: ['graphql', 'gql'],
-    html: ['html', 'html'], css: ['css', 'css'],
-    scss: ['scss', 'scss'], sass: ['scss', 'sass'], less: ['less', 'less'],
-    json: ['json', 'json'], jsonc: ['json', 'jsonc'], yaml: ['yaml', 'yml'],
-    toml: ['plaintext', 'toml'], xml: ['xml', 'xml'], markdown: ['markdown', 'md'],
-    vue: ['html', 'vue'], svelte: ['html', 'svelte'],
-    dockerfile: ['dockerfile', 'dockerfile'],
-    ini: ['ini', 'ini'], nix: ['plaintext', 'nix'], terraform: ['hcl', 'tf'],
-    plaintext: ['plaintext', 'txt'],
-}
+/** Compact editor extensions for inline editors (no chrome). */
+const compactEditorExtensions = [
+    EditorView.theme({
+        '.cm-content': { padding: '16px 0' },
+        '.cm-scroller': { overflow: 'auto' },
+        '&.cm-editor': { maxHeight: '40dvh' },
+    }),
+]
 
 /**
- * Resolve a shiki language identifier to a valid Monaco language identifier.
- * Falls back to the input if not found in the mapping.
- * @param {string} lang - Shiki language identifier
- * @returns {string} Monaco language identifier
+ * Resolve the language for JHV inline editors.
+ * Checks the key-level override first, then the component-level override.
+ * @param {Object|null} keyOverride - Override for a specific key (e.g. from overrides map)
+ * @returns {string|null} Language identifier or null
  */
-function toMonacoLanguage(lang) {
-    return SHIKI_TO_MONACO[lang]?.[0] ?? lang
-}
-
-/**
- * Build a synthetic model path for Monaco, so it can auto-detect language from the
- * file extension — the same approach FilePane uses for instant syntax highlighting.
- *
- * Uses a per-instance ID + suffix to ensure uniqueness across all JHV instances,
- * while remaining stable across re-renders of the same instance.
- *
- * @param {string} [suffix] - Distinguishes multiple editors within the same instance (e.g. '.original')
- * @param {string} [languageOverride] - Shiki language identifier (e.g. 'python')
- * @returns {string|undefined} A synthetic file path or undefined if no language
- */
-let _jhvInstanceCounter = 0
-const _instanceId = ++_jhvInstanceCounter
-function monacoPath(suffix, languageOverride) {
-    const lang = languageOverride ?? props.override?.language
-    if (!lang) return undefined
-    const ext = SHIKI_TO_MONACO[lang]?.[1] ?? lang
-    return `/jhv/${_instanceId}${suffix ?? ''}.${ext}`
+function resolveJhvLanguage(keyOverride) {
+    const lang = keyOverride?.language ?? props.override?.language
+    return lang || null
 }
 
 /**
@@ -284,21 +180,6 @@ function onBooleanChange(event) {
  */
 function onSelectChange(event) {
     emitUpdate(event.target.value)
-}
-
-/**
- * Handle the diff editor mount event.
- * Subscribes to the modified editor's content changes and emits updates
- * for the new_string key of the diff pair.
- * @param {Object} diffEditor - The Monaco diff editor instance
- * @param {string} newKey - The key name for the modified side (e.g. 'new_string')
- */
-function onDiffEditorMount(diffEditor, newKey) {
-    const modifiedEditor = diffEditor.getModifiedEditor()
-    modifiedEditor.onDidChangeModelContent(() => {
-        const newValue = modifiedEditor.getValue()
-        onChildObjectUpdate(newKey, newValue)
-    })
 }
 
 /**
@@ -757,13 +638,14 @@ function generateDiff(oldStr, newStr) {
         <template v-else-if="effectiveType() === 'string-markdown'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
             <template v-if="editable">
-                <div class="jhv-edit-monaco" :style="{ height: monacoHeight(value) }">
-                    <vue-monaco-editor
-                        :value="value"
-                        :path="monacoPath(null, 'markdown')"
-                        :theme="monacoTheme"
-                        :options="monacoEditOptions"
-                        @change="emitUpdate"
+                <div class="jhv-edit-editor" :style="{ height: editorHeight(value) }">
+                    <CodeEditor
+                        :model-value="value"
+                        :language="'markdown'"
+                        :line-numbers="false"
+                        :word-wrap="true"
+                        :extensions="compactEditorExtensions"
+                        @update:model-value="emitUpdate($event)"
                     />
                 </div>
             </template>
@@ -775,16 +657,17 @@ function generateDiff(oldStr, newStr) {
         <!-- String: code (not auto-detected, only via override) -->
         <template v-else-if="effectiveType() === 'string-code'">
             <template v-if="editable">
-                <!-- Multi-line code: Monaco editor -->
+                <!-- Multi-line code: CodeMirror editor -->
                 <template v-if="override?.language || isMultiLine(value)">
                     <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
-                    <div class="jhv-edit-monaco" :style="{ height: monacoHeight(value) }">
-                        <vue-monaco-editor
-                            :value="value"
-                            :path="monacoPath()"
-                            :theme="monacoTheme"
-                            :options="monacoEditOptions"
-                            @change="emitUpdate"
+                    <div class="jhv-edit-editor" :style="{ height: editorHeight(value) }">
+                        <CodeEditor
+                            :model-value="value"
+                            :language="resolveJhvLanguage(override)"
+                            :line-numbers="false"
+                            :word-wrap="true"
+                            :extensions="compactEditorExtensions"
+                            @update:model-value="emitUpdate($event)"
                         />
                     </div>
                 </template>
@@ -864,13 +747,14 @@ function generateDiff(oldStr, newStr) {
         <template v-else-if="effectiveType() === 'string-multiline'">
             <div v-if="name != null" class="jhv-key jhv-block-key">{{ formatLabel(name) }}:</div>
             <template v-if="editable">
-                <div class="jhv-edit-monaco" :style="{ height: monacoHeight(value) }">
-                    <vue-monaco-editor
-                        :value="value"
-                        :path="monacoPath(null, 'plaintext')"
-                        :theme="monacoTheme"
-                        :options="monacoEditOptions"
-                        @change="emitUpdate"
+                <div class="jhv-edit-editor" :style="{ height: editorHeight(value) }">
+                    <CodeEditor
+                        :model-value="value"
+                        :language="null"
+                        :line-numbers="false"
+                        :word-wrap="true"
+                        :extensions="compactEditorExtensions"
+                        @update:model-value="emitUpdate($event)"
                     />
                 </div>
             </template>
@@ -1019,16 +903,15 @@ function generateDiff(oldStr, newStr) {
                             </div>
                             <!-- Diff editor mode (default) — v-show keeps the DiffEditor alive
                                  so toggling back from split mode is instant (no grammar reload). -->
-                            <div v-show="!diffSplitMode[pair.baseName]" class="jhv-edit-diff" :style="{ height: monacoDiffHeight(value[pair.oldKey], value[pair.newKey]) }">
-                                <VueMonacoDiffEditor
-                                    :original="value[pair.oldKey]"
-                                    :modified="value[pair.newKey]"
-                                    :language="toMonacoLanguage((overrides[pair.newKey] ?? siblingOverrides[pair.newKey])?.language ?? 'plaintext')"
-                                    :original-model-path="monacoPath('.original', (overrides[pair.oldKey] ?? siblingOverrides[pair.oldKey])?.language ?? 'plaintext')"
-                                    :modified-model-path="monacoPath('.modified', (overrides[pair.newKey] ?? siblingOverrides[pair.newKey])?.language ?? 'plaintext')"
-                                    :theme="monacoTheme"
-                                    :options="monacoDiffOptions"
-                                    @mount="(editor) => onDiffEditorMount(editor, pair.newKey)"
+                            <div v-show="!diffSplitMode[pair.baseName]" class="jhv-edit-diff" :style="{ height: diffEditorHeight(value[pair.oldKey], value[pair.newKey]) }">
+                                <DiffEditor
+                                    :original="value[pair.oldKey] ?? ''"
+                                    :modified="value[pair.newKey] ?? ''"
+                                    :language="resolveJhvLanguage(overrides[pair.newKey] ?? siblingOverrides[pair.newKey])"
+                                    :read-only="false"
+                                    :word-wrap="true"
+                                    :side-by-side="true"
+                                    @update:modified="onChildObjectUpdate(pair.newKey, $event)"
                                 />
                             </div>
                             <!-- Split mode: old read-only + new editable -->
@@ -1276,7 +1159,7 @@ function generateDiff(oldStr, newStr) {
     min-width: 10rem;
 }
 
-.jhv-edit-monaco {
+.jhv-edit-editor {
     border-radius: var(--wa-form-control-border-radius);
     overflow: hidden;
     border: var(--wa-form-control-border-width) var(--wa-form-control-border-style) var(--wa-form-control-border-color);

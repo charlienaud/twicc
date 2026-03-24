@@ -1,12 +1,11 @@
 <script setup>
-import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount, useId, inject } from 'vue'
-import { useMonaco } from '@guolao/vue-monaco-editor'
+import { ref, watch, computed, nextTick, useId, inject } from 'vue'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
-import githubDark from '../assets/monaco-themes/github-dark.json'
-import githubLight from '../assets/monaco-themes/github-light.json'
 import MarkdownContent from './MarkdownContent.vue'
 import AppTooltip from './AppTooltip.vue'
+import CodeEditor from './CodeEditor.vue'
+import DiffEditor from './DiffEditor.vue'
 
 const props = defineProps({
     projectId: String,
@@ -70,25 +69,9 @@ const apiPrefix = computed(() => {
 
 const settingsStore = useSettingsStore()
 
-// Register GitHub themes once Monaco is loaded
-const { monacoRef } = useMonaco()
-watch(monacoRef, (monaco) => {
-    if (!monaco) return
-    // GitHub Dark with custom background to match our app's dark theme
-    monaco.editor.defineTheme('github-dark', {
-        ...githubDark,
-        colors: {
-            ...githubDark.colors,
-            'editor.background': '#1b2733',  // var(--wa-color-surface-default) on dark mode
-        },
-    })
-    monaco.editor.defineTheme('github-light', githubLight)
-}, { immediate: true })
-
-// --- Monaco editor instances ---
-const editorRef = ref(null)        // Monaco IStandaloneCodeEditor instance (normal mode)
-const diffEditorRef = ref(null)    // Monaco IStandaloneDiffEditor instance (diff mode)
-const savedVersionId = ref(null)   // model.getAlternativeVersionId() at last save/fetch
+// --- CodeMirror editor instances ---
+const codeEditorRef = ref(null)
+const diffEditorRef = ref(null)
 
 // --- File content state ---
 const currentContent = ref('')   // content currently in the editor
@@ -115,49 +98,6 @@ const isEditing = ref(false)
 const saving = ref(false)
 const saveError = ref(null)
 
-// --- Diff navigation ---
-// Monaco's goToDiff() and setPosition() on the diff sub-editor freeze the
-// browser due to hideUnchangedRegions' onDidChangeCursorPosition handler
-// triggering an infinite loop (ensureModifiedLineIsVisible → viewZones update
-// → layout adjust → cursor change → loop). We use getLineChanges() to get
-// the diff list and setScrollTop to navigate safely.
-const currentDiffIndex = ref(0)
-
-function navigateDiff(direction) {
-    const editor = diffEditorRef.value
-    if (!editor) return
-
-    const changes = editor.getLineChanges?.()
-    if (!changes?.length) return
-
-    const modifiedEditor = editor.getModifiedEditor()
-
-    let idx = currentDiffIndex.value
-    if (direction === 'next') {
-        idx = (idx + 1) % changes.length
-    } else {
-        idx = idx <= 0 ? changes.length - 1 : idx - 1
-    }
-    currentDiffIndex.value = idx
-
-    const line = changes[idx].modifiedStartLineNumber
-    setTimeout(() => {
-        // getTopForLineNumber returns the absolute pixel offset of the line
-        // in the document. Setting scrollTop to this value places the line
-        // at the very top of the viewport.
-        const top = modifiedEditor.getTopForLineNumber(line)
-        modifiedEditor.setScrollTop(top)
-    }, 0)
-}
-
-function goToPreviousDiff() {
-    navigateDiff('previous')
-}
-
-function goToNextDiff() {
-    navigateDiff('next')
-}
-
 // --- Word wrap state ---
 // Initialize from parent override (if provided) or settings store.
 const wordWrap = ref(props.initialWordWrap ?? settingsStore.isEditorWordWrap)
@@ -166,128 +106,42 @@ const wordWrap = ref(props.initialWordWrap ?? settingsStore.isEditorWordWrap)
 // Initialize from parent override (if provided) or settings store.
 const sideBySide = ref(props.initialSideBySide ?? settingsStore.isDiffSideBySide)
 
-// Monaco switches to inline when the diff editor width <= 900px
-// (renderSideBySideInlineBreakpoint default). We track the editor area width
-// with a ResizeObserver so we can hide the toggle when side-by-side wouldn't fit.
+// Auto-switch to unified when editor area is too narrow for side-by-side.
+// Start at 0 so the default is unified (safe) until the first measurement arrives.
 const SIDE_BY_SIDE_MIN_WIDTH = 900
-const editorAreaRef = ref(null)        // template ref on .editor-area
-const editorAreaWidth = ref(Infinity)  // current width in px
+const editorAreaRef = ref(null)
+const editorAreaWidth = ref(0)
 let resizeObserver = null
 
-onMounted(() => {
-    if (editorAreaRef.value) {
+// Use a watcher on the template ref instead of onMounted so that the observer
+// is connected as soon as the DOM element exists (handles conditional rendering).
+watch(editorAreaRef, (el, _oldEl, onCleanup) => {
+    resizeObserver?.disconnect()
+    resizeObserver = null
+    if (el) {
         resizeObserver = new ResizeObserver((entries) => {
             for (const entry of entries) {
-                // Ignore zero-width reports from hidden panels (wa-tab-panel
-                // sets display:none, collapsing dimensions to 0). Without this
-                // guard, canSideBySide would flip to false, destroying the
-                // side-by-side switch via v-if, and the new switch created when
-                // the panel becomes visible again would lose its checked state.
                 if (entry.contentRect.width > 0) {
                     editorAreaWidth.value = entry.contentRect.width
                 }
             }
         })
-        resizeObserver.observe(editorAreaRef.value)
+        resizeObserver.observe(el)
     }
-})
+    onCleanup(() => {
+        resizeObserver?.disconnect()
+        resizeObserver = null
+    })
+}, { flush: 'post' })
 
-onBeforeUnmount(() => {
-    resizeObserver?.disconnect()
-    resizeObserver = null
-})
-
-// Whether the editor area is wide enough for side-by-side mode
 const canSideBySide = computed(() => editorAreaWidth.value > SIDE_BY_SIDE_MIN_WIDTH)
-
-// Responsive thresholds for minimap and compact mode
-const MINIMAP_EDITOR_MIN_WIDTH = 1200    // show minimap in editor above this
+const effectiveSideBySide = computed(() => sideBySide.value && canSideBySide.value)
 
 // Whether the editor content differs from the last saved/fetched content.
-// Uses Monaco's alternativeVersionId which is undo-aware: if the user types
-// then undoes everything, the file is no longer dirty.
-// Supports both normal and diff editor modes.
+// Delegates to the CodeMirror editor's own dirty tracking.
 const isDirty = computed(() => {
-    const editor = props.diffMode
-        ? diffEditorRef.value?.getModifiedEditor()
-        : editorRef.value
-    if (editor && savedVersionId.value !== null) {
-        // Accessing currentContent.value to ensure Vue tracks the dependency
-        // (alternativeVersionId is not reactive, but currentContent updates on every change)
-        void currentContent.value
-        const model = editor.getModel()
-        if (model) {
-            return model.getAlternativeVersionId() !== savedVersionId.value
-        }
-    }
-    return false
-})
-
-const monacoTheme = computed(() =>
-    settingsStore.getEffectiveTheme === 'dark' ? 'github-dark' : 'github-light'
-)
-
-const editorOptions = computed(() => ({
-    readOnly: !isEditing.value,
-    domReadOnly: !isEditing.value,  // prevents mobile keyboard from showing when read-only
-    automaticLayout: true,
-    minimap: { enabled: editorAreaWidth.value > MINIMAP_EDITOR_MIN_WIDTH },
-    scrollBeyondLastLine: false,
-    renderLineHighlight: isEditing.value ? 'line' : 'none',
-    fontSize: settingsStore.getFontSize,
-    lineNumbers: 'on',
-    folding: true,
-    wordWrap: wordWrap.value ? 'on' : 'off',
-}))
-
-const diffEditorOptions = computed(() => ({
-    // Commit diffs: always read-only. Index diffs: editable when edit mode is on.
-    readOnly: props.diffReadOnly || !isEditing.value,
-    domReadOnly: props.diffReadOnly || !isEditing.value,  // prevents mobile keyboard from showing when read-only
-    originalEditable: false,
-    renderSideBySide: sideBySide.value,
-    enableSplitViewResizing: true,
-    automaticLayout: true,
-    // compactMode disabled: the compact widget has no interactivity (no way to
-    // expand hidden regions), so we always use the full widget with the unfold icon.
-    compactMode: false,
-    minimap: { enabled: editorAreaWidth.value > MINIMAP_EDITOR_MIN_WIDTH },
-    scrollBeyondLastLine: false,
-    fontSize: settingsStore.getFontSize,
-    wordWrap: wordWrap.value ? 'on' : 'off',
-    hideUnchangedRegions: {
-        enabled: true,
-    },
-    experimental: {
-        useTrueInlineView: true,
-        showMoves: true,
-    }
-}))
-
-// Detect language from the file extension via Monaco's language registry.
-// Needed for the diff editor because vue-monaco-diff-editor defaults to "text"
-// when no language prop is provided, which prevents syntax highlighting.
-// The normal editor doesn't need this because its library passes "" as language
-// fallback, which lets Monaco auto-detect from the model URI.
-const diffLanguage = computed(() => {
-    if (!props.filePath || !monacoRef.value) return undefined
-    const ext = props.filePath.includes('.')
-        ? '.' + props.filePath.split('.').pop()
-        : ''
-    if (!ext) return undefined
-    const langs = monacoRef.value.languages.getLanguages()
-    const match = langs.find(l => l.extensions?.includes(ext))
-    return match?.id
-})
-
-// Use the absolute path as Monaco model path for auto language detection
-const monacoPath = computed(() => {
-    if (!props.filePath) return undefined
-    // When the editor should not be shown (binary / error), return a stable
-    // sentinel path so the library doesn't try to create a model for the real
-    // file path with empty content (which would pollute the model cache).
-    if (isBinary.value || error.value) return undefined
-    return props.filePath
+    if (props.diffMode) return diffEditorRef.value?.isDirty ?? false
+    return codeEditorRef.value?.isDirty ?? false
 })
 
 // Extract filename from the absolute path for display in the header
@@ -297,7 +151,7 @@ const fileName = computed(() => {
     return parts[parts.length - 1]
 })
 
-// Whether the Monaco editor should be visible.
+// Whether the CodeMirror editor should be visible.
 // Hidden when: no file selected, initial load (never displayed yet), binary, or error.
 // In diff mode, content is passed via props so hasLoadedOnce is not relevant.
 const showEditor = computed(() => {
@@ -374,8 +228,8 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
         currentContent.value = data.content
         fileSize.value = data.size
         hasLoadedOnce.value = true
-        // Snapshot after a tick so Monaco has processed the new content
-        nextTick(() => snapshotVersionId())
+        // Reset dirty state after a tick so CodeMirror has processed the new content
+        nextTick(() => codeEditorRef.value?.resetDirty())
     } catch (err) {
         error.value = 'Network error: failed to load file'
         currentContent.value = ''
@@ -395,10 +249,9 @@ watch(() => props.filePath, async (newPath) => {
         return
     }
 
-    // Reset edit mode, markdown preview and diff navigation index when switching files
+    // Reset edit mode and markdown preview when switching files
     isEditing.value = false
     showMarkdownPreview.value = false
-    currentDiffIndex.value = 0
 
     // In diff mode, content is passed via props — don't fetch.
     if (props.diffMode) {
@@ -419,69 +272,7 @@ watch(() => props.modifiedContent, (newContent) => {
     currentContent.value = newContent ?? ''
 })
 
-// --- Monaco editor lifecycle ---
-
-/**
- * Register Ctrl+S as a save action on a Monaco editor instance.
- * The action is always registered but only triggers save() when in edit mode and dirty.
- */
-function registerSaveAction(editor) {
-    editor.addAction({
-        id: 'file-pane-save',
-        label: 'Save File',
-        keybindings: [
-            // Monaco keybinding: CtrlCmd + S (Ctrl on Windows/Linux, Cmd on Mac)
-            monacoRef.value.KeyMod.CtrlCmd | monacoRef.value.KeyCode.KeyS,
-        ],
-        run() {
-            if (isEditing.value && isDirty.value && !saving.value) {
-                save()
-            }
-        },
-    })
-}
-
-function onEditorMount(editor) {
-    editorRef.value = editor
-    snapshotVersionId()
-    registerSaveAction(editor)
-}
-
-let _contentChangeGuard = false
-function onDiffEditorMount(editor) {
-    diffEditorRef.value = editor
-    snapshotVersionId()
-    // Register Ctrl+S on the modified side of the diff editor
-    registerSaveAction(editor.getModifiedEditor())
-    // Listen for changes on the modified side for reactivity (dirty detection)
-    const modifiedEditor = editor.getModifiedEditor()
-    modifiedEditor.onDidChangeModelContent(() => {
-        if (_contentChangeGuard) return  // Prevent re-entrant updates
-        _contentChangeGuard = true
-        currentContent.value = modifiedEditor.getValue()
-        _contentChangeGuard = false
-    })
-}
-
-
-/** Capture the current model version as the "clean" baseline. */
-function snapshotVersionId() {
-    const editor = props.diffMode
-        ? diffEditorRef.value?.getModifiedEditor()
-        : editorRef.value
-    if (editor) {
-        const model = editor.getModel()
-        if (model) {
-            savedVersionId.value = model.getAlternativeVersionId()
-        }
-    }
-}
-
 // --- Edit mode handlers ---
-
-function onEditorChange(value) {
-    currentContent.value = value
-}
 
 function onEditToggle(event) {
     const checked = event.target.checked
@@ -506,9 +297,8 @@ async function save() {
     saving.value = true
     saveError.value = null
 
-    // Use currentContent which is kept in sync via @change (normal mode)
-    // or onDidChangeModelContent (diff mode). Avoid calling getValue()
-    // directly on the diff editor as the model may have been disposed.
+    // Use currentContent which is kept in sync via v-model (normal mode)
+    // or @update:modified (diff mode).
     const content = currentContent.value
 
     try {
@@ -530,8 +320,12 @@ async function save() {
             return
         }
 
-        // Success: snapshot version as new baseline
-        snapshotVersionId()
+        // Success: reset dirty state as new baseline
+        if (props.diffMode) {
+            diffEditorRef.value?.resetDirty()
+        } else {
+            codeEditorRef.value?.resetDirty()
+        }
     } catch (err) {
         saveError.value = 'Network error: failed to save file'
     } finally {
@@ -581,6 +375,30 @@ function formatSize(bytes) {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+// --- CodeMirror editor event handlers ---
+
+function onEditorReady({ view }) {
+    // Post-mount setup if needed
+}
+
+function onDiffReady() {
+    // Post-mount setup if needed
+}
+
+function onDiffModifiedChange(newContent) {
+    currentContent.value = newContent
+}
+
+// --- Diff navigation (delegates to DiffEditor) ---
+
+function goToPreviousDiff() {
+    diffEditorRef.value?.goToPreviousChunk()
+}
+
+function goToNextDiff() {
+    diffEditorRef.value?.goToNextChunk()
 }
 </script>
 
@@ -692,7 +510,7 @@ function formatSize(bytes) {
         </div>
 
         <!-- Save error message (overlays above the editor) -->
-        <div v-if="saveError" class="monaco-placeholder">
+        <div v-if="saveError" class="editor-overlay">
             <wa-callout variant="danger" size="small">
                 {{ saveError }}
             </wa-callout>
@@ -707,34 +525,39 @@ function formatSize(bytes) {
                 />
             </div>
 
-            <!-- Monaco diff editor (diff mode) -->
-            <vue-monaco-diff-editor
+            <!-- CodeMirror diff editor (diff mode) -->
+            <DiffEditor
                 v-if="diffMode && showEditor && !showMarkdownPreview"
+                ref="diffEditorRef"
                 :original="originalContent ?? ''"
                 :modified="modifiedContent ?? ''"
-                :language="diffLanguage"
-                :original-model-path="monacoPath ? monacoPath + '.original' : undefined"
-                :modified-model-path="monacoPath"
-                :theme="monacoTheme"
-                :options="diffEditorOptions"
-                @mount="onDiffEditorMount"
+                :file-path="filePath"
+                :read-only="diffReadOnly || !isEditing"
+                :word-wrap="wordWrap"
+                :side-by-side="effectiveSideBySide"
+                :collapse-unchanged="true"
+                @update:modified="onDiffModifiedChange"
+                @save="save"
+                @ready="onDiffReady"
             />
 
-            <!-- Monaco editor — mounted once, never destroyed on file switch (normal mode) -->
-            <vue-monaco-editor
+            <!-- CodeMirror editor — mounted once, never destroyed on file switch -->
+            <CodeEditor
                 v-if="!diffMode"
                 v-show="showEditor && !showMarkdownPreview"
-                :value="currentContent"
-                :path="monacoPath"
-                :theme="monacoTheme"
-                :options="editorOptions"
+                ref="codeEditorRef"
+                v-model="currentContent"
+                :file-path="filePath"
+                :read-only="!isEditing"
+                :word-wrap="wordWrap"
+                :line-numbers="true"
                 :save-view-state="true"
-                @mount="onEditorMount"
-                @change="onEditorChange"
+                @save="save"
+                @ready="onEditorReady"
             />
 
             <!-- Overlay: initial loading (before any file has been displayed) -->
-            <div v-if="showOverlay" class="monaco-placeholder">
+            <div v-if="showOverlay" class="editor-overlay">
                 <template v-if="loading">
                     <wa-spinner></wa-spinner>
                 </template>
@@ -765,9 +588,10 @@ function formatSize(bytes) {
     align-items: center;
     justify-content: space-between;
     padding: var(--wa-space-xs) var(--wa-space-s);
-    border-bottom: 1px solid var(--wa-color-neutral-200);
+    border-bottom: 4px solid var(--wa-color-surface-border);
     min-height: 2.25rem;
     flex-shrink: 0;
+    flex-wrap: wrap;
 }
 
 .header-left {
@@ -828,7 +652,7 @@ function formatSize(bytes) {
     padding: var(--wa-space-m) var(--wa-space-l);
 }
 
-.monaco-placeholder {
+.editor-overlay {
     display: flex;
     flex-direction: column;
     align-items: center;

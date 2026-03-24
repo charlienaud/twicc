@@ -11,7 +11,7 @@ import { toast } from '../composables/useToast'
 import '@xterm/xterm/css/xterm.css'
 
 // ── Terminal themes ──────────────────────────────────────────────────────
-// Background colors match the Monaco editor and --wa-color-surface-default.
+// Background colors match the code editor and --wa-color-surface-default.
 
 const THEMES = {
     dark: {

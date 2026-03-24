@@ -23,7 +23,7 @@
 | Frontend         | Vue.js 3 (SFC, Composition API) + Vite 7    |
 | State Management | Pinia + VueUse                              |
 | UI Components    | Web Awesome 3+ (wa-* elements)              |
-| Code Editor      | Monaco (CDN-loaded via vue-monaco-editor)   |
+| Code Editor      | CodeMirror 6 (bundled via npm)               |
 | Terminal         | xterm.js with PTY backend                   |
 | Markdown         | markdown-it + shiki + mermaid               |
 

@@ -455,7 +455,7 @@ function handleTreeReposition(event) {
 // A single FileTreePanel and FilePane instance are always rendered inside
 // hidden "owner" divs. When the layout switches between desktop (split panel)
 // and mobile (stacked), we move the actual DOM nodes into the appropriate
-// container so the component state (tree expansion, Monaco editor, unsaved
+// container so the component state (tree expansion, editor, unsaved
 // changes…) is fully preserved.
 
 const treeOwnerRef = ref(null)        // hidden div that owns the FileTreePanel instance

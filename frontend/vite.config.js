@@ -24,6 +24,20 @@ export default defineConfig(({ command }) => ({
         outDir: '../src/twicc/static/frontend',
         emptyOutDir: true
     },
+    // Ensure all CodeMirror packages and their shared dependency (style-mod)
+    // are pre-bundled together. Without this, Vite's dep optimizer may fail
+    // to resolve style-mod, preventing CM6 from injecting its CSS.
+    optimizeDeps: {
+        include: [
+            'codemirror',
+            '@codemirror/state',
+            '@codemirror/view',
+            '@codemirror/language',
+            '@codemirror/merge',
+            '@codemirror/autocomplete',
+            'style-mod',
+        ],
+    },
     server: {
         allowedHosts: devAllowedHost ? [devAllowedHost] : [],
         proxy: {
