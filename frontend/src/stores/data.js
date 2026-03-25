@@ -280,6 +280,33 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
+         * Check if any session in a project has active cron jobs.
+         * @param {string} projectId - The project ID
+         * @returns {boolean} True if at least one session has active crons
+         */
+        getProjectHasActiveCrons: (state) => (projectId) => {
+            for (const processState of Object.values(state.processStates)) {
+                if (processState.project_id !== projectId) continue
+                if (processState.active_crons?.length > 0) return true
+            }
+            return false
+        },
+
+        /**
+         * Get the total count of active cron jobs across all sessions in a project.
+         * @param {string} projectId - The project ID
+         * @returns {number} The total number of active crons
+         */
+        getProjectActiveCronCount: (state) => (projectId) => {
+            let count = 0
+            for (const processState of Object.values(state.processStates)) {
+                if (processState.project_id !== projectId) continue
+                count += processState.active_crons?.length || 0
+            }
+            return count
+        },
+
+        /**
          * Get the count of active processes for a project.
          * @param {string} projectId - The project ID
          * @returns {number} The number of active processes

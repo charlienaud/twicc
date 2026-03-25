@@ -44,10 +44,21 @@ const projectState = computed(() => dataStore.getProjectProcessState(props.proje
 // Count of active processes for this project
 const processCount = computed(() => dataStore.getProjectProcessCount(props.projectId))
 
+/** Whether any session in the project has active cron jobs. */
+const hasActiveCrons = computed(() => dataStore.getProjectHasActiveCrons(props.projectId))
+
+/** Total number of active cron jobs across all sessions in the project (for tooltip). */
+const activeCronCount = computed(() => dataStore.getProjectActiveCronCount(props.projectId))
+
 // Tooltip text with count
 const tooltipText = computed(() => {
     const count = processCount.value
-    return `${count} active Claude Code session${count !== 1 ? 's' : ''}`
+    let text = `${count} active Claude Code session${count !== 1 ? 's' : ''}`
+    const cronCount = activeCronCount.value
+    if (cronCount > 0) {
+        text += ` (${cronCount} active cron${cronCount > 1 ? 's' : ''})`
+    }
+    return text
 })
 
 // Unique ID for this instance (avoids collisions when multiple instances exist for the same project)
@@ -65,6 +76,7 @@ const animateStates = ['assistant_turn']
             :state="projectState"
             :size="size"
             :animate-states="animateStates"
+            :has-active-crons="hasActiveCrons"
         />
         <AppTooltip :for="indicatorId">{{ tooltipText }}</AppTooltip>
     </template>
