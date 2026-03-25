@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, inject, watch, nextTick, onUnmounted } from 'vue'
+import { computed, ref, inject, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
@@ -67,8 +67,22 @@ const POLLING_DELAY_MS = 3000
 const toolUseDetailsRef = ref(null)
 const resultDetailsRef = ref(null)
 
-// Lazy rendering: content is only mounted when wa-details is open
-const isOpen = ref(false)
+// Lazy rendering: content is only mounted when wa-details is open.
+// Initialized from the store to restore state across virtual scroller mount/unmount cycles.
+const isOpen = ref(dataStore.isDetailOpen(props.sessionId, props.toolId))
+
+// Restore wa-details open state on mount (when re-entering virtual scroller viewport)
+onMounted(() => {
+    if (isOpen.value) {
+        nextTick(() => {
+            toolUseDetailsRef.value?.show()
+            // Also restore nested result details if it was open
+            if (dataStore.isDetailOpen(props.sessionId, `result:${props.toolId}`)) {
+                nextTick(() => resultDetailsRef.value?.show())
+            }
+        })
+    }
+})
 
 // Tool result state
 const resultState = ref('idle') // 'idle' | 'loading' | 'loaded' | 'error'
@@ -160,6 +174,7 @@ function stopPolling() {
  * Fetches if idle, or if loaded but empty (to retry).
  */
 function onResultOpen() {
+    dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, true)
     // Fetch if idle, or if loaded but no data (retry)
     const shouldFetch = resultState.value === 'idle' ||
         (resultState.value === 'loaded' && (!resultData.value || resultData.value.length === 0))
@@ -174,6 +189,7 @@ function onResultOpen() {
  * Stops polling to avoid unnecessary requests.
  */
 function onResultClose() {
+    dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, false)
     stopPolling()
 }
 
@@ -183,6 +199,8 @@ function onResultClose() {
  */
 function onToolUseClose() {
     isOpen.value = false
+    dataStore.setDetailOpen(props.sessionId, props.toolId, false)
+    dataStore.setDetailOpen(props.sessionId, `result:${props.toolId}`, false)
     stopPolling()
 }
 
@@ -192,6 +210,7 @@ function onToolUseClose() {
  */
 function onToolUseOpen() {
     isOpen.value = true
+    dataStore.setDetailOpen(props.sessionId, props.toolId, true)
     // Check if result details is open (wa-details has an 'open' property)
     const isResultOpen = resultDetailsRef.value?.open === true
 
@@ -506,11 +525,14 @@ const showResultDetails = computed(() => {
     return true
 })
 
-// --- Auto-open Edit/Write details when "Show diffs" setting is enabled ---
+// --- Auto-open Edit/Write details for live diffs when setting is enabled ---
+// Only auto-opens diffs that arrive in real-time via WebSocket (live), not
+// historical diffs loaded from the API when opening/scrolling a session.
 const shouldAutoOpen = computed(() => {
     if (!settingsStore.showDiffs) return false
     if (isToolError.value) return false
     if (!toolState.value?.completedAt) return false
+    if (!toolState.value?.live) return false
     return editValid.value || writeValid.value
 })
 
@@ -525,15 +547,8 @@ watch(shouldAutoOpen, (val) => {
         // at the bottom as the item height grows frame by frame.
         requestScrollToBottomIfNeeded?.()
         isOpen.value = true
+        dataStore.setDetailOpen(props.sessionId, props.toolId, true)
         nextTick(() => toolUseDetailsRef.value?.show())
-    }
-}, { immediate: true })
-
-// Close auto-opened details when the setting is turned off
-watch(() => settingsStore.showDiffs, (val) => {
-    if (!val && hasAutoOpened && isOpen.value) {
-        hasAutoOpened = false
-        toolUseDetailsRef.value?.hide()
     }
 })
 

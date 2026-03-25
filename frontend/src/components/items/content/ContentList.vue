@@ -261,11 +261,15 @@ function toggleInternalGroup(startIndex) {
             <ThinkingContent
                 v-else-if="entry.item.type === 'thinking'"
                 :thinking="entry.item.thinking"
+                :session-id="sessionId"
+                :detail-key="`line:${lineNum}:${entry.index}`"
             />
             <UnknownEntry
                 v-else
                 :type="entry.item.type"
                 :data="entry.item"
+                :session-id="sessionId"
+                :detail-key="`line:${lineNum}:${entry.index}`"
             />
         </template>
     </template>

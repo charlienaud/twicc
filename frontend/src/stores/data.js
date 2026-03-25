@@ -157,10 +157,16 @@ export const useDataStore = defineStore('data', {
             // Only caches found agents (not-found triggers polling, not caching)
             agentLinks: {},
 
-            // Tool states - maps tool_use_id to { resultCount, completedAt, error, extra? }
-            // { sessionId: { toolUseId: { resultCount, completedAt, error, extra? } } }
+            // Tool states - maps tool_use_id to { resultCount, completedAt, error, extra?, live }
+            // { sessionId: { toolUseId: { resultCount, completedAt, error, extra?, live } } }
             // Populated by fetchToolStates on session load and WS tool_state
             toolStates: {},
+
+            // Open wa-details state - persists open/close across virtual scroller mount/unmount.
+            // { sessionId: { key: true, ... } }
+            // Keys: toolId for tool_use details, `result:${toolId}` for tool result details.
+            // Only open items are stored (sparse map). Ephemeral: not persisted, lost on refresh.
+            openDetails: {},
 
             // Project display names cache - computed from name, directory, or id
             // { projectId: displayName }
@@ -385,6 +391,11 @@ export const useDataStore = defineStore('data', {
             const sessionStates = state.localState.toolStates[sessionId]
             if (!sessionStates) return null
             return sessionStates[toolUseId] || null
+        },
+
+        // Check if a wa-details panel is open (persisted across virtual scroller cycles)
+        isDetailOpen: (state) => (sessionId, key) => {
+            return !!state.localState.openDetails[sessionId]?.[key]
         },
 
         // Get draft message for a session
@@ -1068,6 +1079,7 @@ export const useDataStore = defineStore('data', {
             delete this.localState.optimisticMessages[sessionId]
             delete this.localState.agentLinks[sessionId]
             delete this.localState.toolStates[sessionId]
+            delete this.localState.openDetails[sessionId]
             // Remove synthetic process state if this is a subagent
             if (this.processStates[sessionId]?.synthetic) {
                 delete this.processStates[sessionId]
@@ -1646,12 +1658,13 @@ export const useDataStore = defineStore('data', {
          * @param {string} toolUseId - The tool_use_id
          * @param {number} resultCount - The number of tool_results received
          * @param {string|null} completedAt - ISO timestamp of the latest tool_result
+         * @param {boolean} live - Whether this state arrived via WebSocket (live) vs API (historical)
          */
-        setToolState(sessionId, toolUseId, resultCount, completedAt, error = null, extra = null) {
+        setToolState(sessionId, toolUseId, resultCount, completedAt, error = null, extra = null, live = false) {
             if (!this.localState.toolStates[sessionId]) {
                 this.localState.toolStates[sessionId] = {}
             }
-            this.localState.toolStates[sessionId][toolUseId] = { resultCount, completedAt, error, extra }
+            this.localState.toolStates[sessionId][toolUseId] = { resultCount, completedAt, error, extra, live }
         },
 
         /**
@@ -1682,6 +1695,27 @@ export const useDataStore = defineStore('data', {
                 }
             } catch (error) {
                 console.error('Failed to fetch tool states:', error)
+            }
+        },
+
+        // Open details state actions (persisted across virtual scroller mount/unmount)
+
+        /**
+         * Set or clear the open state of a wa-details panel.
+         * @param {string} sessionId - The session ID
+         * @param {string} key - Unique key (toolId, `result:${toolId}`, etc.)
+         * @param {boolean} open - Whether the panel is open
+         */
+        setDetailOpen(sessionId, key, open) {
+            if (open) {
+                if (!this.localState.openDetails[sessionId]) {
+                    this.localState.openDetails[sessionId] = {}
+                }
+                this.localState.openDetails[sessionId][key] = true
+            } else {
+                if (this.localState.openDetails[sessionId]) {
+                    delete this.localState.openDetails[sessionId][key]
+                }
             }
         },
 

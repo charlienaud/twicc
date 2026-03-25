@@ -303,7 +303,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-show-diffs',
-            label: 'Toggle Auto Open Edit Diffs',
+            label: 'Toggle Auto Open Live Edit Diffs',
             icon: 'code-compare',
             category: 'display',
             toggled: () => settings.isShowDiffs,

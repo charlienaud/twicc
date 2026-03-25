@@ -1,8 +1,11 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
+import { useDataStore } from '../../stores/data'
 import JsonHumanView from '../JsonHumanView.vue'
 
-defineProps({
+const dataStore = useDataStore()
+
+const props = defineProps({
     type: {
         type: String,
         default: 'unknown'
@@ -10,15 +13,43 @@ defineProps({
     data: {
         type: Object,
         default: null
+    },
+    sessionId: {
+        type: String,
+        required: true
+    },
+    detailKey: {
+        type: String,
+        required: true
     }
 })
 
-// Lazy rendering: content is only mounted when wa-details is open
-const isOpen = ref(false)
+const detailsRef = ref(null)
+
+// Lazy rendering: content is only mounted when wa-details is open.
+// Initialized from the store to restore state across virtual scroller mount/unmount cycles.
+const isOpen = ref(dataStore.isDetailOpen(props.sessionId, props.detailKey))
+
+// Restore wa-details open state on mount (when re-entering virtual scroller viewport)
+onMounted(() => {
+    if (isOpen.value) {
+        nextTick(() => detailsRef.value?.show())
+    }
+})
+
+function onShow() {
+    isOpen.value = true
+    dataStore.setDetailOpen(props.sessionId, props.detailKey, true)
+}
+
+function onHide() {
+    isOpen.value = false
+    dataStore.setDetailOpen(props.sessionId, props.detailKey, false)
+}
 </script>
 
 <template>
-    <wa-details class="item-details unknown-entry" icon-placement="start" @wa-show="isOpen = true" @wa-hide="isOpen = false">
+    <wa-details ref="detailsRef" class="item-details unknown-entry" icon-placement="start" @wa-show="onShow" @wa-hide="onHide">
         <span slot="summary" class="items-details-summary">
             <strong class="items-details-summary-name">Unhandled event</strong>
             <span class="items-details-summary-separator"> — </span>

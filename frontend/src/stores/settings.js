@@ -349,7 +349,7 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
-         * Set show diffs (auto-expand Edit/Write tool details).
+         * Set show diffs (auto-expand Edit/Write tool details for live items only).
          * @param {boolean} enabled
          */
         setShowDiffs(enabled) {

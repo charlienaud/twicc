@@ -573,7 +573,7 @@ function onPopoverShow() {
                         </wa-select>
                     </div>
                     <div class="setting-group">
-                        <label class="setting-group-label">Auto open edit diffs</label>
+                        <label class="setting-group-label">Auto open live edit diffs</label>
                         <wa-switch
                             :checked="showDiffs"
                             @change="onShowDiffsChange"
