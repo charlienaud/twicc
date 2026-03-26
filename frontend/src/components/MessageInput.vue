@@ -1045,6 +1045,35 @@ async function handleReset() {
         }
     }
 }
+
+/**
+ * Insert text at the current cursor position in the textarea.
+ * If no cursor position is available, appends to the end.
+ * Focuses the textarea and positions the cursor after the inserted text.
+ */
+function insertTextAtCursor(text) {
+    const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
+    const current = messageText.value
+    const pos = inner?.selectionStart ?? current.length
+
+    const before = current.slice(0, pos)
+    const after = current.slice(inner?.selectionEnd ?? pos)
+    const newText = before + text + after
+
+    updateTextareaContent(newText)
+
+    // Position cursor after the inserted text and focus
+    const newPos = pos + text.length
+    nextTick(() => {
+        const innerEl = textareaRef.value?.shadowRoot?.querySelector('textarea')
+        if (innerEl) {
+            innerEl.setSelectionRange(newPos, newPos)
+        }
+        textareaRef.value?.focus()
+    })
+}
+
+defineExpose({ insertTextAtCursor })
 </script>
 
 <template>

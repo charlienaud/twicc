@@ -109,8 +109,9 @@ const MIN_ITEM_SIZE = 50
 const pendingLoadRange = ref(null)
 
 // Drag and drop state
-const isDragOver = ref(false)
+const dragOverType = ref(null)  // null | 'files' | 'text'
 let dragCounter = 0  // Track enter/leave events for nested elements
+const messageInputRef = ref(null)
 
 // Session data
 const session = computed(() => store.getSession(props.sessionId))
@@ -805,12 +806,16 @@ function getScrollerElement() {
  * Uses a counter to properly handle nested elements.
  */
 function onDragEnter(event) {
-    // Only show overlay for file drops, not text drags
-    if (!event.dataTransfer?.types?.includes('Files')) return
+    const types = event.dataTransfer?.types
+    // Only handle file or text drops (not internal browser drags like link/bookmark)
+    const hasFiles = types?.includes('Files')
+    const hasText = types?.includes('text/plain')
+    if (!hasFiles && !hasText) return
     event.preventDefault()
     dragCounter++
     if (dragCounter === 1) {
-        isDragOver.value = true
+        // Files take precedence (a file drop may also carry text/plain)
+        dragOverType.value = hasFiles ? 'files' : 'text'
     }
 }
 
@@ -819,11 +824,12 @@ function onDragEnter(event) {
  * Uses a counter to properly handle nested elements.
  */
 function onDragLeave(event) {
-    if (!event.dataTransfer?.types?.includes('Files')) return
+    const types = event.dataTransfer?.types
+    if (!types?.includes('Files') && !types?.includes('text/plain')) return
     event.preventDefault()
     dragCounter--
     if (dragCounter === 0) {
-        isDragOver.value = false
+        dragOverType.value = null
     }
 }
 
@@ -831,24 +837,36 @@ function onDragLeave(event) {
  * Handle dragover event - required to allow drop.
  */
 function onDragOver(event) {
-    if (!event.dataTransfer?.types?.includes('Files')) return
+    const types = event.dataTransfer?.types
+    if (!types?.includes('Files') && !types?.includes('text/plain')) return
     event.preventDefault()
 }
 
 /**
- * Handle drop event - process dropped files.
+ * Handle drop event - process dropped files or insert dropped text.
  */
 async function onDrop(event) {
     event.preventDefault()
     dragCounter = 0
-    isDragOver.value = false
+    dragOverType.value = null
 
-    const files = event.dataTransfer?.files
-    if (!files || files.length === 0) return
+    const dataTransfer = event.dataTransfer
+    const hasFiles = dataTransfer?.types?.includes('Files')
 
-    // Process each file
-    for (const file of files) {
-        await processDroppedFile(file)
+    if (hasFiles) {
+        const files = dataTransfer.files
+        if (!files || files.length === 0) return
+
+        // Process each file
+        for (const file of files) {
+            await processDroppedFile(file)
+        }
+    } else {
+        // Dropped text — insert into the message textarea
+        const text = dataTransfer?.getData('text/plain')
+        if (text && messageInputRef.value) {
+            messageInputRef.value.insertTextAtCursor(text)
+        }
     }
 }
 
@@ -1131,7 +1149,7 @@ defineExpose({
 <template>
     <div
         class="session-items-list"
-        :class="{ 'drag-over': isDragOver }"
+        :class="{ 'drag-over': dragOverType }"
         @dragenter="onDragEnter"
         @dragleave="onDragLeave"
         @dragover="onDragOver"
@@ -1264,6 +1282,7 @@ defineExpose({
             />
             <!-- Message input (only for main sessions, not subagents, hidden during pending requests) -->
             <MessageInput
+                ref="messageInputRef"
                 v-else-if="!parentSessionId && !hasPendingRequest"
                 :session-id="sessionId"
                 :project-id="projectId"
@@ -1272,10 +1291,10 @@ defineExpose({
         </div>
 
         <!-- Drop zone overlay -->
-        <div v-if="isDragOver" class="drop-overlay">
+        <div v-if="dragOverType" class="drop-overlay">
             <div class="drop-overlay-content">
-                <wa-icon name="cloud-upload" style="font-size: 3rem;"></wa-icon>
-                <span>Drop files here</span>
+                <wa-icon :name="dragOverType === 'files' ? 'cloud-upload' : 'text-indent-left'" style="font-size: 3rem;"></wa-icon>
+                <span>{{ dragOverType === 'files' ? 'Drop files here' : 'Drop text into message' }}</span>
             </div>
         </div>
     </div>
