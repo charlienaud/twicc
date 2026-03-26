@@ -343,11 +343,6 @@ function notifyProcessStateChange(msg, previousState, route) {
                 type: 'error',
                 title: 'Claude Code stopped: failed to start within 1 minute',
             })
-        } else if (msg.kill_reason === 'timeout_user_turn') {
-            toast.session(sessionId, {
-                type: 'info',
-                title: 'Claude Code stopped: inactive for 15 minutes',
-            })
         } else if (msg.kill_reason === 'timeout_assistant_turn') {
             toast.session(sessionId, {
                 type: 'warning',
