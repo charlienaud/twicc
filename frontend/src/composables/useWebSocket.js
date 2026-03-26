@@ -596,15 +596,6 @@ export function useWebSocket() {
                 }
                 break
             case 'process_state': {
-                // If the backend confirms a process is running for a draft session,
-                // drop the draft flag immediately — this is the earliest signal that
-                // the session is real, before the watcher even sees the JSONL file.
-                if (msg.state !== 'dead') {
-                    const session = store.getSession(msg.session_id)
-                    if (session?.draft) {
-                        store.updateSession({ ...session, draft: false })
-                    }
-                }
                 // Capture previous state before updating (needed for transition detection)
                 const previousProcessState = store.processStates[msg.session_id] || null
                 // Update process state for a session
