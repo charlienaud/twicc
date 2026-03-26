@@ -569,7 +569,11 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             await self._handle_pending_request_response(content)
 
         elif msg_type == "suggest_title":
-            await self._handle_suggest_title(content)
+            # Fire-and-forget: title generation involves an SDK call (Haiku) with
+            # retries that can take many seconds. Running it as a background task
+            # avoids blocking the consumer — so send_message (which typically
+            # follows immediately) is processed without delay.
+            asyncio.create_task(self._handle_suggest_title(content))
 
         elif msg_type == "update_synced_settings":
             await self._handle_update_synced_settings(content)
