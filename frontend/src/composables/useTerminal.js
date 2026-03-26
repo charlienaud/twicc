@@ -68,6 +68,111 @@ const THEMES = {
     },
 }
 
+// ── Mobile special-key handling ─────────────────────────────────────────
+// On mobile (Android/iOS), xterm.js unreliably translates special keys
+// (arrows, Home, Tab, Ctrl+letter, etc.) to ANSI escape sequences.
+// This can be caused by the IME reporting keyCode=229, composition state
+// interference, or input event side-effects — the root cause varies.
+//
+// These helpers use event.key (which is always correctly set regardless of
+// IME state) to build the right ANSI sequences ourselves. On touch devices,
+// they replace xterm.js's own key handling for all recognized special keys.
+// Regular character input (letters, digits, punctuation) is unaffected.
+
+/**
+ * Compute the xterm modifier parameter from a keyboard event.
+ * When ignoreShift is true, the Shift modifier is excluded — needed on mobile
+ * where Android keyboards often falsely report shiftKey=true on arrow keys
+ * and other special keys.
+ */
+function _imeModifierParam(event, ignoreShift = false) {
+    let bits = 0
+    if (!ignoreShift && event.shiftKey) bits |= 1
+    if (event.altKey) bits |= 2
+    if (event.ctrlKey) bits |= 4
+    return bits > 0 ? bits + 1 : 0
+}
+
+// CSI cursor keys: \x1b[{letter} — with modifier: \x1b[1;{mod}{letter}
+const _CSI_CURSOR_KEYS = {
+    ArrowUp: 'A', ArrowDown: 'B', ArrowRight: 'C', ArrowLeft: 'D',
+    Home: 'H', End: 'F',
+}
+
+// CSI tilde keys: \x1b[{num}~ — with modifier: \x1b[{num};{mod}~
+const _CSI_TILDE_KEYS = {
+    Insert: 2, Delete: 3, PageUp: 5, PageDown: 6,
+    F5: 15, F6: 17, F7: 18, F8: 19, F9: 20, F10: 21, F11: 23, F12: 24,
+}
+
+// SS3 keys (F1-F4): \x1bO{letter} — with modifier: \x1b[1;{mod}{letter}
+const _SS3_KEYS = { F1: 'P', F2: 'Q', F3: 'R', F4: 'S' }
+
+/**
+ * Map a keyboard event (with keyCode=229 from mobile IME) to the correct
+ * ANSI escape sequence. Returns null if the key is not a recognized special
+ * key, letting xterm.js handle it through its normal composition path.
+ *
+ * @param {KeyboardEvent} event
+ * @param {Object} [options]
+ * @param {boolean} [options.ignoreShift=false] - Ignore shiftKey in modifier
+ *   calculation. On Android, soft keyboards often falsely report shiftKey=true
+ *   for arrow keys and other special keys.
+ * @returns {string|null}
+ */
+function imeKeyToAnsiSequence(event, { ignoreShift = false } = {}) {
+    // For CSI/SS3 sequences, use the modifier param (with optional shift ignore).
+    // Shift is checked directly for Tab and Backspace below where it matters.
+    const mod = _imeModifierParam(event, ignoreShift)
+
+    // CSI cursor keys
+    const cursorLetter = _CSI_CURSOR_KEYS[event.key]
+    if (cursorLetter) {
+        return mod ? `\x1b[1;${mod}${cursorLetter}` : `\x1b[${cursorLetter}`
+    }
+
+    // CSI tilde keys
+    const tildeNum = _CSI_TILDE_KEYS[event.key]
+    if (tildeNum !== undefined) {
+        return mod ? `\x1b[${tildeNum};${mod}~` : `\x1b[${tildeNum}~`
+    }
+
+    // SS3 keys (F1-F4)
+    const ss3Letter = _SS3_KEYS[event.key]
+    if (ss3Letter) {
+        return mod ? `\x1b[1;${mod}${ss3Letter}` : `\x1bO${ss3Letter}`
+    }
+
+    // Simple keys
+    switch (event.key) {
+        case 'Tab':
+            return event.shiftKey ? '\x1b[Z' : '\x09'
+        case 'Escape':
+            return '\x1b'
+        case 'Enter':
+            return '\x0d'
+        case 'Backspace':
+            return event.ctrlKey ? '\x08' : '\x7f'
+    }
+
+    // Ctrl+letter (a-z): send control character (0x01–0x1a)
+    // Shift doesn't affect control characters (Ctrl+Shift+R = Ctrl+R = 0x12)
+    if (event.ctrlKey && !event.altKey && event.key.length === 1) {
+        const code = event.key.toUpperCase().charCodeAt(0)
+        if (code >= 0x41 && code <= 0x5a) {
+            return String.fromCharCode(code - 0x40)
+        }
+    }
+
+    // Alt+letter: send ESC prefix followed by the character
+    // (e.g. Alt+B = \x1bb = word back in bash, Alt+F = \x1bf = word forward)
+    if (event.altKey && !event.ctrlKey && event.key.length === 1) {
+        return `\x1b${event.key}`
+    }
+
+    return null
+}
+
 /**
  * Composable for managing an xterm.js terminal with a dedicated WebSocket
  * connection to the backend PTY.
@@ -318,9 +423,31 @@ export function useTerminal(sessionId) {
         // Fit immediately
         fitAddon.fit()
 
-        // Intercept Ctrl+Shift+C to copy selection instead of opening DevTools
+        // Custom key event handler — runs BEFORE xterm.js's own keydown processing.
+        // This is where we intercept keys that xterm.js would otherwise mishandle.
         terminal.attachCustomKeyEventHandler((event) => {
-            if (event.type === 'keydown' && event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
+            if (event.type !== 'keydown') return true
+
+            // ── Mobile special-key handling (touch devices only) ─────────
+            // On mobile, xterm.js unreliably translates special keys (arrows,
+            // Home, Tab, Ctrl+letter, etc.) to ANSI sequences — sometimes
+            // because the IME reports keyCode=229, sometimes for other reasons
+            // (composition state, input event interference, etc.).
+            // On touch devices, we bypass xterm.js entirely for any special
+            // key we know how to translate, using event.key which is always
+            // reliable. Regular character input (letters, digits, punctuation)
+            // is unaffected — imeKeyToAnsiSequence returns null for those.
+            if (settingsStore.isTouchDevice) {
+                const sequence = imeKeyToAnsiSequence(event, { ignoreShift: true })
+                if (sequence) {
+                    event.preventDefault()
+                    wsSend({ type: 'input', data: sequence })
+                    return false
+                }
+            }
+
+            // Intercept Ctrl+Shift+C to copy selection instead of opening DevTools
+            if (event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
                 const selection = terminal.getSelection()
                 if (selection) {
                     navigator.clipboard.writeText(selection)
@@ -328,6 +455,7 @@ export function useTerminal(sessionId) {
                 event.preventDefault()
                 return false
             }
+
             return true
         })
 

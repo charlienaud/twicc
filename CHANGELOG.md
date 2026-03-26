@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - Draft badge now really disappears immediately when sending a message
+- Fix terminal special keys sometimes not working on mobile devices
 
 ## [1.2.1] - 2026-03-20
 
