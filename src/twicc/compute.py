@@ -1137,8 +1137,8 @@ def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
     Classification rules:
     - ALWAYS (1): USER_MESSAGE, ASSISTANT_MESSAGE, API_ERROR kinds
     - COLLAPSIBLE (2): Meta messages, thinking/tool_use only,
-                       summaries, file snapshots, custom titles
-    - DEBUG_ONLY (3): SYSTEM kind, standalone tool_result items
+                       summaries, file snapshots
+    - DEBUG_ONLY (3): SYSTEM kind, CUSTOM_TITLE kind, standalone tool_result items
 
     Args:
         parsed_json: Parsed JSON content of the item
@@ -1156,7 +1156,8 @@ def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
         return ItemDisplayLevel.ALWAYS
 
     # DEBUG_ONLY: SYSTEM kind (system messages, queue-operation, progress, XML commands)
-    if kind == ItemKind.SYSTEM:
+    # DEBUG_ONLY: CUSTOM_TITLE kind (written by Claude CLI on every resume — very noisy)
+    if kind in (ItemKind.SYSTEM, ItemKind.CUSTOM_TITLE):
         return ItemDisplayLevel.DEBUG_ONLY
 
     # DEBUG_ONLY: Standalone tool_result items (their data is accessed via ToolResultLink)
@@ -1164,7 +1165,7 @@ def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
         return ItemDisplayLevel.DEBUG_ONLY
 
     # Everything else is collapsible: meta messages, thinking/tool_use,
-    # summaries, file snapshots, custom titles, etc.
+    # summaries, file snapshots, etc.
     return ItemDisplayLevel.COLLAPSIBLE
 
 
