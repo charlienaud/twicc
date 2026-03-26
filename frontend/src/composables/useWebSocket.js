@@ -43,6 +43,9 @@ if (!('debouncedDraftNotifications' in __hmrState)) __hmrState.debouncedDraftNot
 // First call passes immediately, subsequent calls are throttled
 if (!('throttledViewedNotifications' in __hmrState)) __hmrState.throttledViewedNotifications = new Map() // sessionId -> throttledFn
 
+// Active user_turn toast tracking — prevents duplicates, allows cleanup from SessionToastContent
+if (!('activeUserTurnToasts' in __hmrState)) __hmrState.activeUserTurnToasts = new Set() // sessionId
+
 /**
  * Reactive flag: true when a backend version change was detected.
  * Used by App.vue to show the reload dialog.
@@ -155,8 +158,10 @@ function _sendSessionViewed(sessionId) {
 /**
  * Notify the server that the user is viewing a session.
  * Updates last_viewed_at in the database for "unread" detection.
- * Throttled to 30 seconds per session: first call fires immediately,
- * subsequent calls within the window are dropped.
+ * Throttled to 30 seconds per session: first call fires immediately (leading),
+ * and a trailing call is guaranteed at the end of the window if any calls
+ * were made during the throttle period. This ensures last_viewed_at stays
+ * fresh even when content arrives shortly after navigation.
  * @param {string} sessionId - The session ID
  */
 export function notifySessionViewed(sessionId) {
@@ -166,7 +171,7 @@ export function notifySessionViewed(sessionId) {
     if (!__hmrState.throttledViewedNotifications.has(sessionId)) {
         const throttledFn = useThrottleFn(() => {
             _sendSessionViewed(sessionId)
-        }, 30000) // 30s throttle (leading=true, trailing=false by default)
+        }, 30000, true) // 30s throttle, trailing=true (leading=true by default)
         __hmrState.throttledViewedNotifications.set(sessionId, throttledFn)
     }
 
@@ -201,6 +206,15 @@ export function markSessionReadState(sessionId, unread) {
         session_id: sessionId,
         unread,
     })
+}
+
+/**
+ * Remove a session from the active user_turn toast tracking.
+ * Called by SessionToastContent when the toast is dismissed (auto or manual).
+ * @param {string} sessionId - The session ID
+ */
+export function clearUserTurnToast(sessionId) {
+    __hmrState.activeUserTurnToasts.delete(sessionId)
 }
 
 /**
@@ -243,10 +257,22 @@ function notifyProcessStateChange(msg, previousState, route) {
 
     // --- Transition to user_turn: "Claude finished working" ---
     if (msg.state === 'user_turn' && previousState?.state !== 'user_turn') {
-        // In-app toast when the user is on TwiCC but not viewing this session
         const isViewingSession = route?.params?.sessionId === sessionId
-        if (!isViewingSession) {
-            toast.session(sessionId, { type: 'info', title: 'Claude finished working' })
+        // If viewing the session, force-update last_viewed_at immediately.
+        // This prevents stale state if the user locks their phone or switches
+        // apps before the trailing throttle call fires.
+        if (isViewingSession) {
+            forceNotifySessionViewed(sessionId)
+        }
+        // In-app toast when the user is on TwiCC but not viewing this session
+        if (!isViewingSession && !__hmrState.activeUserTurnToasts.has(sessionId)) {
+            __hmrState.activeUserTurnToasts.add(sessionId)
+            toast.session(sessionId, {
+                type: 'info',
+                title: 'Claude finished working',
+                duration: 15000,
+                autoDismiss: true,
+            })
         }
         // Sound notification
         playNotificationSound(settings.notifUserTurnSound)
@@ -542,7 +568,8 @@ export function useWebSocket() {
                 if (store.areSessionItemsFetched(msg.session_id)) {
                     store.addSessionItems(msg.session_id, msg.items, msg.updated_metadata)
                 }
-                // If user is currently viewing this session, mark as viewed (throttled)
+                // If user is currently viewing this session, mark as viewed (throttled
+                // with trailing edge, so last_viewed_at stays fresh as content arrives)
                 if (route.params.sessionId === msg.session_id) {
                     notifySessionViewed(msg.session_id)
                 }

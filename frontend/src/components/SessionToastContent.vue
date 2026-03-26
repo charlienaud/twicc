@@ -5,12 +5,17 @@
  * Displays the project badge and session title inside a CustomNotification,
  * replacing the plain text "Session: <title>" that was used before.
  *
+ * When autoDismiss is true (used for user_turn toasts), the toast auto-closes when:
+ * - The user navigates to the session
+ * - The session becomes read (e.g. viewed on another device)
+ *
  * Usage (via useToast):
  *   toast.session(sessionId, { type: 'success', title: 'Claude Code started' })
  */
-import { computed } from 'vue'
+import { computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
+import { clearUserTurnToast } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 
 const props = defineProps({
@@ -21,6 +26,11 @@ const props = defineProps({
     errorMessage: {
         type: String,
         default: null,
+    },
+    /** When true, auto-dismiss when navigating to session or session becomes read */
+    autoDismiss: {
+        type: Boolean,
+        default: false,
     },
     /** Notivue item reference — passed by CustomNotification to allow dismissing the toast */
     item: {
@@ -43,6 +53,35 @@ const sessionTitle = computed(() => session.value?.title || processState.value?.
 
 /** Whether we're already viewing this session. */
 const isCurrentSession = computed(() => route.params.sessionId === props.sessionId)
+
+/** Whether the session has unread content. */
+const isUnread = computed(() => {
+    const s = session.value
+    if (!s?.last_new_content_at) return false
+    return !s.last_viewed_at || s.last_new_content_at > s.last_viewed_at
+})
+
+// Auto-dismiss watchers (only active when autoDismiss is true)
+if (props.autoDismiss) {
+    // Dismiss when user navigates to this session
+    watch(isCurrentSession, (current) => {
+        if (current) props.item?.clear?.()
+    }, { immediate: true })
+
+    // Dismiss when session becomes read (e.g. marked as read on another device,
+    // or viewed on current device). immediate: true handles the case where the
+    // session is already read when the toast appears (e.g. race with session_updated broadcast).
+    watch(isUnread, (unread) => {
+        if (!unread) props.item?.clear?.()
+    }, { immediate: true })
+}
+
+// Clean up tracking when toast is destroyed (by any means: auto-close, manual dismiss, auto-dismiss)
+onUnmounted(() => {
+    if (props.autoDismiss) {
+        clearUserTurnToast(props.sessionId)
+    }
+})
 
 /** Navigate to the session, switching project if needed, then dismiss the toast. */
 function goToSession() {

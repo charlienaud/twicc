@@ -187,6 +187,7 @@ function session(sessionId, options = {}) {
         props: {
             sessionId,
             ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
+            ...(options.autoDismiss ? { autoDismiss: true } : {}),
         },
     })
 }
