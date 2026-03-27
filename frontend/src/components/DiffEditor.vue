@@ -50,6 +50,9 @@ let currentMode = null
 /** Cleanup function returned by useSettingsWatcher. */
 let _stopSettingsWatcher = null
 
+/** Generation counter: incremented on each create/destroy to abort stale async creations. */
+let _createGeneration = 0
+
 // ─── Extension compartments ───────────────────────────────────────────────────
 // We manage two sets of compartments: one for the original side (a) and one for
 // the modified side (b). For unified mode, only cmB is used (the single EditorView).
@@ -157,7 +160,9 @@ function setupSettingsWatcher() {
 // ─── Create side-by-side (MergeView) ─────────────────────────────────────────
 
 async function createSideBySideView() {
+    const gen = ++_createGeneration
     const langExtension = await resolveLanguage(props.filePath, props.language)
+    if (gen !== _createGeneration) return  // a destroy/create happened during the await
 
     const updateListener = buildUpdateListener()
     const saveKeymap = buildSaveKeymap()
@@ -196,7 +201,9 @@ async function createSideBySideView() {
 // ─── Create unified (EditorView + unifiedMergeView) ──────────────────────────
 
 async function createUnifiedView() {
+    const gen = ++_createGeneration
     const langExtension = await resolveLanguage(props.filePath, props.language)
+    if (gen !== _createGeneration) return  // a destroy/create happened during the await
 
     const updateListener = buildUpdateListener()
     const saveKeymap = buildSaveKeymap()
@@ -236,6 +243,7 @@ async function createUnifiedView() {
 // ─── Destroy ─────────────────────────────────────────────────────────────────
 
 function destroyCurrentView() {
+    _createGeneration++  // invalidate any in-progress async creation
     if (_stopSettingsWatcher) {
         _stopSettingsWatcher()
         _stopSettingsWatcher = null

@@ -111,6 +111,7 @@ const sideBySide = ref(props.initialSideBySide ?? settingsStore.isDiffSideBySide
 const SIDE_BY_SIDE_MIN_WIDTH = 900
 const editorAreaRef = ref(null)
 const editorAreaWidth = ref(0)
+const widthMeasured = ref(false)
 let resizeObserver = null
 
 // Use a watcher on the template ref instead of onMounted so that the observer
@@ -123,6 +124,7 @@ watch(editorAreaRef, (el, _oldEl, onCleanup) => {
             for (const entry of entries) {
                 if (entry.contentRect.width > 0) {
                     editorAreaWidth.value = entry.contentRect.width
+                    if (!widthMeasured.value) widthMeasured.value = true
                 }
             }
         })
@@ -542,7 +544,7 @@ function goToNextDiff() {
 
             <!-- CodeMirror diff editor (diff mode) -->
             <DiffEditor
-                v-if="diffMode && showEditor && !showMarkdownPreview"
+                v-if="diffMode && showEditor && !showMarkdownPreview && widthMeasured"
                 ref="diffEditorRef"
                 :original="originalContent ?? ''"
                 :modified="modifiedContent ?? ''"

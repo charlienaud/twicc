@@ -350,7 +350,7 @@ export function useCodeMirrorExtensions(options, { initialTheme = false, initial
     const extensions = [
         ...STATIC_EXTENSIONS,
         languageCompartment.of([]),  // populated async after view creation
-        themeCompartment.of(createThemeExtension(initialTheme)),
+        themeCompartment.of(createThemeExtension(initialTheme === 'dark' || initialTheme === true)),
         fontSizeCompartment.of(createFontSizeExtension(initialFontSize)),
         readOnlyCompartment.of([
             EditorState.readOnly.of(isReadOnly()),
@@ -453,8 +453,11 @@ export function useSettingsWatcher(getView, cmExtensions, overrides = {}) {
     // But if settings.js ever imports from this file, we'd get a cycle.
     // Using async import() here ensures no module-level static edge.
     const stops = []
+    let cancelled = false
     ;(async () => {
         const { useSettingsStore } = await import('../stores/settings')
+        if (cancelled) return  // stop() was called before the import resolved
+
         const settingsStore = useSettingsStore()
 
         if (!overrides.theme) {
@@ -479,5 +482,8 @@ export function useSettingsWatcher(getView, cmExtensions, overrides = {}) {
             ))
         }
     })()
-    return () => stops.forEach(stop => stop())
+    return () => {
+        cancelled = true
+        stops.forEach(stop => stop())
+    }
 }
