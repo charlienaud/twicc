@@ -12,7 +12,7 @@
  */
 
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { apiFetch } from '../utils/api'
@@ -24,6 +24,7 @@ import ProjectBadge from './ProjectBadge.vue'
 import ProjectSelectOptions from './ProjectSelectOptions.vue'
 import AppTooltip from './AppTooltip.vue'
 
+const route = useRoute()
 const router = useRouter()
 const store = useDataStore()
 const settingsStore = useSettingsStore()
@@ -61,6 +62,12 @@ function open() {
             searchInputRef.value?.focus()
             return
         }
+
+        // Pre-select project filter based on current route context:
+        // single-project mode → current project, all-projects/other → all projects
+        const isAllProjectsMode = route.name?.startsWith('projects-') || !route.params.projectId
+        filters.projectId = isAllProjectsMode ? '' : (route.params.projectId || '')
+
         dialogRef.value.open = true
         isOpen.value = true
     }
