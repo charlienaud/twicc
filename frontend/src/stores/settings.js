@@ -29,6 +29,8 @@ const SETTINGS_SCHEMA = {
     autoUnpinOnArchive: true,
     terminalUseTmux: false,
     showDiffs: false,
+    toolDiffWordWrap: true,
+    toolDiffSideBySide: false,
     diffSideBySide: true,
     editorWordWrap: true,
     compactSessionList: false,
@@ -80,6 +82,8 @@ const SETTINGS_VALIDATORS = {
     autoUnpinOnArchive: (v) => typeof v === 'boolean',
     terminalUseTmux: (v) => typeof v === 'boolean',
     showDiffs: (v) => typeof v === 'boolean',
+    toolDiffWordWrap: (v) => typeof v === 'boolean',
+    toolDiffSideBySide: (v) => typeof v === 'boolean',
     diffSideBySide: (v) => typeof v === 'boolean',
     editorWordWrap: (v) => typeof v === 'boolean',
     compactSessionList: (v) => typeof v === 'boolean',
@@ -180,6 +184,8 @@ export const useSettingsStore = defineStore('settings', {
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
         isTerminalUseTmux: (state) => state.terminalUseTmux,
         isShowDiffs: (state) => state.showDiffs,
+        isToolDiffWordWrap: (state) => state.toolDiffWordWrap,
+        isToolDiffSideBySide: (state) => state.toolDiffSideBySide,
         isDiffSideBySide: (state) => state.diffSideBySide,
         isEditorWordWrap: (state) => state.editorWordWrap,
         isCompactSessionList: (state) => state.compactSessionList,
@@ -359,7 +365,27 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
-         * Set diff side-by-side default mode.
+         * Set tool diff word wrap default (for Edit/Write diffs in sessions).
+         * @param {boolean} enabled
+         */
+        setToolDiffWordWrap(enabled) {
+            if (SETTINGS_VALIDATORS.toolDiffWordWrap(enabled)) {
+                this.toolDiffWordWrap = enabled
+            }
+        },
+
+        /**
+         * Set tool diff side-by-side default (for Edit/Write diffs in sessions).
+         * @param {boolean} enabled
+         */
+        setToolDiffSideBySide(enabled) {
+            if (SETTINGS_VALIDATORS.toolDiffSideBySide(enabled)) {
+                this.toolDiffSideBySide = enabled
+            }
+        },
+
+        /**
+         * Set diff side-by-side default mode (for the editor/git panel).
          * @param {boolean} enabled
          */
         setDiffSideBySide(enabled) {
@@ -651,6 +677,8 @@ export function initSettings() {
             autoUnpinOnArchive: store.autoUnpinOnArchive,
             terminalUseTmux: store.terminalUseTmux,
             showDiffs: store.showDiffs,
+            toolDiffWordWrap: store.toolDiffWordWrap,
+            toolDiffSideBySide: store.toolDiffSideBySide,
             diffSideBySide: store.diffSideBySide,
             editorWordWrap: store.editorWordWrap,
             compactSessionList: store.compactSessionList,

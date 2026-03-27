@@ -600,15 +600,18 @@ const fileChangeStats = computed(() => {
     }
 })
 
-// --- Edit/Write tools: fetch structuredPatch from the tool_result item ---
+// --- Edit/Write tools: fetch structuredPatch + originalFile from the tool_result item ---
 // When fileChangeStats is available, we know the backend has computed hunk data.
-// We fetch the actual tool_result item to get the real structuredPatch with file line numbers.
+// We fetch the actual tool_result item to get the real structuredPatch with file line numbers
+// and the originalFile content for full-file diff rendering.
 const fileChangeBackendPatch = ref(null)
+const fileChangeOriginalFile = ref(null)
 const fileChangeBackendPatchLoading = ref(false)
 
 watchEffect(async () => {
     if ((!editValid.value && !writeValid.value) || !fileChangeStats.value) {
         fileChangeBackendPatch.value = null
+        fileChangeOriginalFile.value = null
         return
     }
     const lineNum = toolState.value?.toolResultLineNum
@@ -616,14 +619,25 @@ watchEffect(async () => {
     // Already resolved for this line
     if (fileChangeBackendPatch.value?._lineNum === lineNum) return
 
-    // Check if the item is already in the store
-    const item = dataStore.getSessionItem(props.sessionId, lineNum)
-    if (item && hasContent(item)) {
-        const parsed = getParsedContent(item)
-        const patch = parsed?.toolUseResult?.structuredPatch
+    // Extract patch + originalFile from a parsed tool_result item
+    function extractToolResultData(parsed) {
+        const toolUseResult = parsed?.toolUseResult
+        if (!toolUseResult) return
+
+        const patch = toolUseResult.structuredPatch
         if (Array.isArray(patch) && patch.length > 0) {
             fileChangeBackendPatch.value = Object.freeze(Object.assign([...patch], { _lineNum: lineNum }))
         }
+        const origFile = toolUseResult.originalFile
+        if (typeof origFile === 'string') {
+            fileChangeOriginalFile.value = origFile
+        }
+    }
+
+    // Check if the item is already in the store
+    const item = dataStore.getSessionItem(props.sessionId, lineNum)
+    if (item && hasContent(item)) {
+        extractToolResultData(getParsedContent(item))
         return
     }
 
@@ -635,11 +649,7 @@ watchEffect(async () => {
         )
         const fetched = dataStore.getSessionItem(props.sessionId, lineNum)
         if (fetched && hasContent(fetched)) {
-            const parsed = getParsedContent(fetched)
-            const patch = parsed?.toolUseResult?.structuredPatch
-            if (Array.isArray(patch) && patch.length > 0) {
-                fileChangeBackendPatch.value = Object.freeze(Object.assign([...patch], { _lineNum: lineNum }))
-            }
+            extractToolResultData(getParsedContent(fetched))
         }
     } finally {
         fileChangeBackendPatchLoading.value = false
@@ -842,8 +852,8 @@ function navigateToSubagent() {
         </span>
         <template v-if="isOpen">
             <TodoContent v-if="isTodoWrite && todosValid" :todos="input.todos" />
-            <EditContent v-else-if="editValid" :input="input" :backend-patch="fileChangeBackendPatch" :backend-patch-loading="fileChangeBackendPatchLoading" />
-            <WriteContent v-else-if="writeValid" :input="input" :backend-patch="fileChangeBackendPatch" :backend-patch-loading="fileChangeBackendPatchLoading" />
+            <EditContent v-else-if="editValid" :input="input" :backend-patch="fileChangeBackendPatch" :backend-patch-loading="fileChangeBackendPatchLoading" :original-file="fileChangeOriginalFile" />
+            <WriteContent v-else-if="writeValid" :input="input" :backend-patch="fileChangeBackendPatch" :backend-patch-loading="fileChangeBackendPatchLoading" :original-file="fileChangeOriginalFile" />
             <div v-else-if="displayInput" class="tool-input">
                 <JsonHumanView
                     :value="displayInput"

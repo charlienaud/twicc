@@ -68,6 +68,8 @@ const alwaysApplyDefaultClaudeInChrome = computed(() => store.isAlwaysApplyDefau
 const defaultContextMax = computed(() => store.getDefaultContextMax)
 const alwaysApplyDefaultContextMax = computed(() => store.isAlwaysApplyDefaultContextMax)
 const showDiffs = computed(() => store.isShowDiffs)
+const toolDiffWordWrap = computed(() => store.isToolDiffWordWrap)
+const toolDiffSideBySide = computed(() => store.isToolDiffSideBySide)
 const diffSideBySide = computed(() => store.isDiffSideBySide)
 const editorWordWrap = computed(() => store.isEditorWordWrap)
 
@@ -323,7 +325,21 @@ function onShowDiffsChange(event) {
 }
 
 /**
- * Toggle diff side-by-side default.
+ * Toggle tool diff word wrap default (for Edit/Write diffs in sessions).
+ */
+function onToolDiffWordWrapChange(event) {
+    store.setToolDiffWordWrap(event.target.checked)
+}
+
+/**
+ * Toggle tool diff side-by-side default (for Edit/Write diffs in sessions).
+ */
+function onToolDiffSideBySideChange(event) {
+    store.setToolDiffSideBySide(event.target.checked)
+}
+
+/**
+ * Toggle diff side-by-side default (for the editor/git panel).
  */
 function onDiffSideBySideChange(event) {
     store.setDiffSideBySide(event.target.checked)
@@ -573,12 +589,23 @@ function onPopoverShow() {
                         </wa-select>
                     </div>
                     <div class="setting-group">
-                        <label class="setting-group-label">Auto open live edit diffs</label>
+                        <label class="setting-group-label">Diffs</label>
                         <wa-switch
                             :checked="showDiffs"
                             @change="onShowDiffsChange"
                             size="small"
-                        >Enabled</wa-switch>
+                        >Auto open edits</wa-switch>
+                        <wa-switch
+                            :checked="toolDiffWordWrap"
+                            @change="onToolDiffWordWrapChange"
+                            size="small"
+                        >Word wrap</wa-switch>
+                        <wa-switch
+                            :checked="toolDiffSideBySide"
+                            @change="onToolDiffSideBySideChange"
+                            size="small"
+                        >Side by side</wa-switch>
+                        <span class="setting-group-hint">Inactive if the screen is too narrow.</span>
                     </div>
                     <div class="setting-group">
                         <label class="setting-group-label">Time display</label>
@@ -667,21 +694,17 @@ function onPopoverShow() {
                 <section class="settings-section">
                     <h3 class="settings-section-title">Editor</h3>
                     <div class="setting-group">
-                        <label class="setting-group-label">Word wrap</label>
+                        <label class="setting-group-label">Display</label>
                         <wa-switch
                             :checked="editorWordWrap"
                             @change="onEditorWordWrapChange"
                             size="small"
-                        >Enabled</wa-switch>
-                        <span class="setting-group-hint">Wrap long lines in the editor.</span>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Default diff layout</label>
+                        >Word wrap</wa-switch>
                         <wa-switch
                             :checked="diffSideBySide"
                             @change="onDiffSideBySideChange"
                             size="small"
-                        >Side by side</wa-switch>
+                        >Diff side by side</wa-switch>
                         <span class="setting-group-hint">Inactive if the screen is too narrow.</span>
                     </div>
                 </section>
