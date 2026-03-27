@@ -9,7 +9,7 @@ import { ref, shallowRef, toRefs, nextTick, watch, onMounted, onBeforeUnmount } 
 import { EditorView, keymap } from '@codemirror/view'
 import { EditorSelection, Transaction } from '@codemirror/state'
 import { undoDepth } from '@codemirror/commands'
-import { resolveLanguage, detectIndent, useCodeMirrorExtensions, useSettingsWatcher } from '../composables/useCodeMirror'
+import { resolveLanguage, detectIndent, useCodeMirrorExtensions, useSettingsWatcher, toggleSearchPanel } from '../composables/useCodeMirror'
 import { useSettingsStore } from '../stores/settings'
 
 // ─── View state cache (module-level, shared across instances) ────────────────
@@ -269,6 +269,7 @@ defineExpose({
         isDirty.value = false
     },
     focus() { view.value?.focus() },
+    openSearch() { toggleSearchPanel(view.value) },
 })
 </script>
 

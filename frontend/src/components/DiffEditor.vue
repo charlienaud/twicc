@@ -2,15 +2,19 @@
 <!-- Wraps @codemirror/merge as a Vue 3 component, supporting both side-by-side (MergeView)
      and unified (EditorView + unifiedMergeView extension) diff modes. -->
 <template>
-    <div ref="diffEl" class="diff-editor"></div>
+    <div class="diff-editor">
+        <div ref="diffEl" class="diff-editor-content"></div>
+        <div ref="panelContainerEl" class="diff-panel-container"></div>
+    </div>
 </template>
 
 <script setup>
 import { ref, nextTick, watch, onMounted, onBeforeUnmount } from 'vue'
-import { EditorView, keymap } from '@codemirror/view'
+import { EditorView, keymap, panels } from '@codemirror/view'
 import { EditorSelection } from '@codemirror/state'
 import { MergeView, unifiedMergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge'
-import { resolveLanguage, useCodeMirrorExtensions, useSettingsWatcher } from '../composables/useCodeMirror'
+import { openSearchPanel, getSearchQuery, setSearchQuery, searchPanelOpen, SearchQuery } from '@codemirror/search'
+import { resolveLanguage, useCodeMirrorExtensions, useSettingsWatcher, toggleSearchPanel } from '../composables/useCodeMirror'
 import { useSettingsStore } from '../stores/settings'
 
 // ─── Props ───────────────────────────────────────────────────────────────────
@@ -25,6 +29,10 @@ const props = defineProps({
     sideBySide: { type: Boolean, default: true },
     collapseUnchanged: { type: Boolean, default: true },
     extensions: { type: Array, default: () => [] },
+    /** Optional external DOM element for search/replace panels (side-by-side mode).
+     *  When provided, panels are redirected there instead of the internal container.
+     *  Useful when the DiffEditor is inside a scrollable container where sticky fails. */
+    panelContainer: { type: Object, default: null },
 })
 
 // ─── Emits ───────────────────────────────────────────────────────────────────
@@ -34,6 +42,7 @@ const emit = defineEmits(['update:modified', 'save', 'ready'])
 // ─── Template ref & state ────────────────────────────────────────────────────
 
 const diffEl = ref(null)
+const panelContainerEl = ref(null)
 
 /** True when the document has unsaved local edits (since last external update). */
 const isDirty = ref(false)
@@ -167,9 +176,14 @@ async function createSideBySideView() {
     const updateListener = buildUpdateListener()
     const saveKeymap = buildSaveKeymap()
 
+    // Redirect search/replace panels to an external container so they stay
+    // visible at the bottom instead of being clipped by MergeView's overflow.
+    const panelsExt = panels({ bottomContainer: props.panelContainer || panelContainerEl.value })
+
     // Original side (a): always read-only, no save keymap, no update listener
     const aExtensions = [
         ...cmA.extensions,
+        panelsExt,
         ...(langExtension ? [langExtension] : []),
         ...props.extensions,
     ]
@@ -177,6 +191,7 @@ async function createSideBySideView() {
     // Modified side (b): read-only based on prop, plus save keymap and update listener
     const bExtensions = [
         ...cmB.extensions,
+        panelsExt,
         ...(langExtension ? [langExtension] : []),
         saveKeymap,
         updateListener,
@@ -240,6 +255,40 @@ async function createUnifiedView() {
     setupSettingsWatcher()
 }
 
+// ─── Search state preservation across mode switches ─────────────────────────
+
+/** Saved search state to restore after a mode switch (unified ↔ side-by-side). */
+let _savedSearchState = null
+
+/**
+ * Capture the current search query and panel-open state from the modified view.
+ * Called before destroying the view so it can be restored on the new one.
+ */
+function saveSearchState() {
+    const v = getModifiedView()
+    if (!v) { _savedSearchState = null; return }
+    const panelOpen = searchPanelOpen(v.state)
+    if (!panelOpen) { _savedSearchState = null; return }
+    _savedSearchState = getSearchQuery(v.state)
+}
+
+/**
+ * Restore a previously saved search state on the modified view.
+ * Opens the search panel and injects the saved query (search text, replace,
+ * case sensitivity, regexp, whole word).
+ */
+function restoreSearchState() {
+    if (!_savedSearchState) return
+    const v = getModifiedView()
+    if (!v) return
+    const spec = _savedSearchState
+    _savedSearchState = null
+    // Open the panel first, then inject the query
+    openSearchPanel(v)
+    const query = new SearchQuery(spec)
+    v.dispatch({ effects: setSearchQuery.of(query) })
+}
+
 // ─── Destroy ─────────────────────────────────────────────────────────────────
 
 function destroyCurrentView() {
@@ -274,6 +323,7 @@ onBeforeUnmount(() => {
 
 // Mode switch: destroy + recreate in the other mode
 watch(() => props.sideBySide, async (newSideBySide) => {
+    saveSearchState()
     destroyCurrentView()
     isDirty.value = false
     if (newSideBySide) {
@@ -281,6 +331,7 @@ watch(() => props.sideBySide, async (newSideBySide) => {
     } else {
         await createUnifiedView()
     }
+    restoreSearchState()
 })
 
 // Content changed (file/commit switch): original or modified prop changed.
@@ -375,6 +426,7 @@ defineExpose({
     scrollToLine,
     isDirty,
     resetDirty() { isDirty.value = false },
+    openSearch() { toggleSearchPanel(getModifiedView()) },
 })
 </script>
 
@@ -382,11 +434,28 @@ defineExpose({
 .diff-editor {
     width: 100%;
     height: 100%;
+    display: flex;
+    flex-direction: column;
 }
 
-.diff-editor :deep(.cm-editor),
-.diff-editor :deep(.cm-mergeView) {
+.diff-editor-content {
+    flex: 1;
+    min-height: 0;
+}
+
+.diff-editor-content :deep(.cm-editor),
+.diff-editor-content :deep(.cm-mergeView) {
     height: 100%;
+}
+
+.diff-panel-container {
+    flex-shrink: 0;
+    /* Stick to the bottom of the nearest scroll ancestor so the search panel
+       stays visible even when the diff content is taller than the viewport
+       (e.g. inside ToolDiffViewer's constrained max-height container). */
+    position: sticky;
+    bottom: 0;
+    z-index: 300;
 }
 </style>
 

@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, useId } from 'vue'
 import DiffEditor from '../../DiffEditor.vue'
 import CodeEditor from '../../CodeEditor.vue'
+import AppTooltip from '../../AppTooltip.vue'
 import { useSettingsStore } from '../../../stores/settings'
 
 const SIDE_BY_SIDE_MIN_WIDTH = 900
@@ -16,6 +17,11 @@ const props = defineProps({
     /** File path for language detection */
     filePath: { type: String, default: null },
 })
+
+const searchButtonId = useId()
+const diffEditorRef = ref(null)
+const codeEditorRef = ref(null)
+const searchPanelEl = ref(null)
 
 const settingsStore = useSettingsStore()
 
@@ -55,28 +61,51 @@ function onWordWrapToggle(event) {
 function onSideBySideToggle(event) {
     sideBySide.value = event.target.checked
 }
+
+function openSearch() {
+    if (props.mode === 'diff') {
+        diffEditorRef.value?.openSearch()
+    } else {
+        codeEditorRef.value?.openSearch()
+    }
+}
 </script>
 
 <template>
     <div class="tool-diff-viewer">
         <div class="tool-diff-header">
-            <wa-switch
-                :checked="wordWrap"
-                size="small"
-                @change="onWordWrapToggle"
-            >Wrap</wa-switch>
-            <wa-switch
-                v-if="mode === 'diff' && canSideBySide"
-                :checked="sideBySide"
-                size="small"
-                class="side-by-side-toggle"
-                @change="onSideBySideToggle"
-            >Side by side</wa-switch>
+            <div class="tool-diff-header-left">
+                <wa-button
+                    :id="searchButtonId"
+                    size="small"
+                    variant="neutral"
+                    appearance="outlined"
+                    @click="openSearch"
+                >
+                    <wa-icon name="magnifying-glass"></wa-icon>
+                </wa-button>
+                <AppTooltip :for="searchButtonId">Search in editor</AppTooltip>
+            </div>
+            <div class="tool-diff-header-right">
+                <wa-switch
+                    :checked="wordWrap"
+                    size="small"
+                    @change="onWordWrapToggle"
+                >Wrap</wa-switch>
+                <wa-switch
+                    v-if="mode === 'diff' && canSideBySide"
+                    :checked="sideBySide"
+                    size="small"
+                    class="side-by-side-toggle"
+                    @change="onSideBySideToggle"
+                >Side by side</wa-switch>
+            </div>
         </div>
         <div ref="editorAreaRef" class="tool-diff-body">
             <template v-if="editorReady">
                 <DiffEditor
                     v-if="mode === 'diff'"
+                    ref="diffEditorRef"
                     :original="original"
                     :modified="modified"
                     :file-path="filePath"
@@ -84,9 +113,11 @@ function onSideBySideToggle(event) {
                     :word-wrap="wordWrap"
                     :side-by-side="effectiveSideBySide"
                     :collapse-unchanged="true"
+                    :panel-container="searchPanelEl"
                 />
                 <CodeEditor
                     v-else
+                    ref="codeEditorRef"
                     :model-value="modified"
                     :file-path="filePath"
                     :read-only="true"
@@ -94,6 +125,9 @@ function onSideBySideToggle(event) {
                 />
             </template>
         </div>
+        <!-- Search panel container: outside .tool-diff-body so it's not inside
+             the scrollable area where sticky positioning fails -->
+        <div ref="searchPanelEl" class="tool-diff-search-panel"></div>
     </div>
 </template>
 
@@ -101,9 +135,16 @@ function onSideBySideToggle(event) {
 .tool-diff-header {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: var(--wa-space-xs);
     padding-bottom: var(--wa-space-xs);
+}
+
+.tool-diff-header-left,
+.tool-diff-header-right {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
 }
 
 .side-by-side-toggle {

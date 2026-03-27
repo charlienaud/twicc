@@ -9,7 +9,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLi
 import { foldGutter, indentOnInput, bracketMatching, indentUnit } from '@codemirror/language'
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { indentWithTab } from '@codemirror/commands'
-import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search'
+import { search, searchKeymap, highlightSelectionMatches, openSearchPanel, closeSearchPanel, searchPanelOpen } from '@codemirror/search'
 import { minimalSetup } from 'codemirror'
 import { githubDark, githubLight } from '@uiw/codemirror-theme-github'
 import { getLanguageFromPath } from '../utils/languages'
@@ -243,7 +243,23 @@ const STATIC_EXTENSIONS = [
     EditorState.allowMultipleSelections.of(true),
 ]
 
-// ─── e) Indent detection ────────────────────────────────────────────────────
+// ─── e) Search panel toggle ──────────────────────────────────────────────────
+
+/**
+ * Toggle the CodeMirror search panel open/closed.
+ *
+ * The panel adapts automatically to the editor state: in read-only mode it
+ * shows search only; in editable mode it includes search + replace fields.
+ *
+ * @param {EditorView} view - The CodeMirror EditorView instance
+ */
+export function toggleSearchPanel(view) {
+    if (!view) return
+    if (searchPanelOpen(view.state)) closeSearchPanel(view)
+    else openSearchPanel(view)
+}
+
+// ─── f) Indent detection ────────────────────────────────────────────────────
 
 /**
  * Detect the indentation style used in a document string.

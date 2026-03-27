@@ -54,6 +54,7 @@ const prevChangeButtonId = useId()
 const nextChangeButtonId = useId()
 const markdownPreviewButtonId = useId()
 const viewInFilesButtonId = useId()
+const searchButtonId = useId()
 
 // Injected from SessionView: function to switch to Files tab and reveal a file.
 // null when FilePane is not inside a SessionView (or no Files tab available).
@@ -408,6 +409,16 @@ function onDiffModifiedChange(newContent) {
     currentContent.value = newContent
 }
 
+// --- Search (delegates to active editor) ---
+
+function openSearch() {
+    if (props.diffMode) {
+        diffEditorRef.value?.openSearch()
+    } else {
+        codeEditorRef.value?.openSearch()
+    }
+}
+
 // --- Diff navigation (delegates to DiffEditor) ---
 
 function goToPreviousDiff() {
@@ -424,6 +435,17 @@ function goToNextDiff() {
         <!-- Header toolbar (visible once a file has been loaded) -->
         <div v-if="showHeader" class="header">
             <div class="header-left">
+                <wa-button
+                    v-if="!showMarkdownPreview"
+                    :id="searchButtonId"
+                    size="small"
+                    variant="neutral"
+                    appearance="outlined"
+                    @click="openSearch"
+                >
+                    <wa-icon name="magnifying-glass"></wa-icon>
+                </wa-button>
+                <AppTooltip :for="searchButtonId">Search in editor</AppTooltip>
                 <!-- "View in Files tab" button: shown only in diff mode (Git tab context) -->
                 <wa-button
                     v-if="viewFileInFilesTab && diffMode"
