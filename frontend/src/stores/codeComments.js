@@ -22,6 +22,16 @@ export function buildKeyArray({ projectId, sessionId, filePath, source, sourceRe
     return [projectId, sessionId, filePath, source, sourceRef, lineNumber]
 }
 
+// ─── Count cache key builders ───────────────────────────────────────────────
+
+function projectKey(c) { return c.projectId }
+function sessionKey(c) { return `${c.projectId}\0${c.sessionId}` }
+function sourceKey(c) { return `${c.projectId}\0${c.sessionId}\0${c.source}` }
+function sourceRefKey(c) { return `${c.projectId}\0${c.sessionId}\0${c.source}\0${c.sourceRef}` }
+function fileKey(c) { return `${c.projectId}\0${c.sessionId}\0${c.source}\0${c.sourceRef}\0${c.filePath}` }
+
+const COUNT_KEY_BUILDERS = [projectKey, sessionKey, sourceKey, sourceRefKey, fileKey]
+
 // ─── Debounce timers (module-level, not reactive) ───────────────────────────
 
 const _debouncers = {}
@@ -33,9 +43,23 @@ export const useCodeCommentsStore = defineStore('codeComments', {
     state: () => ({
         /**
          * All comments indexed by serialized key.
-         * @type {Object<string, {projectId: string, sessionId: string, filePath: string, source: string, sourceRef: string, lineNumber: number, content: string, createdAt: number, updatedAt: number}>}
+         * @type {Object<string, {projectId: string, sessionId: string, filePath: string, source: string, sourceRef: string, lineNumber: number, lineText: string, content: string, createdAt: number, updatedAt: number}>}
          */
         comments: {},
+
+        /**
+         * Cached counts at each hierarchical level.
+         * Keyed by the level's composite key (built by COUNT_KEY_BUILDERS).
+         * Updated incrementally on add/remove — never recomputed by iteration.
+         * @type {{ byProject: Object<string,number>, bySession: Object<string,number>, bySource: Object<string,number>, bySourceRef: Object<string,number>, byFile: Object<string,number> }}
+         */
+        counts: {
+            byProject: {},
+            bySession: {},
+            bySource: {},
+            bySourceRef: {},
+            byFile: {},
+        },
     }),
 
     getters: {
@@ -55,20 +79,6 @@ export const useCodeCommentsStore = defineStore('codeComments', {
             )
         },
 
-        // ─── Hierarchical count getters (for indicators) ────────────────
-
-        /** Count all comments in a project. */
-        countByProject: (state) => (projectId) => {
-            return Object.values(state.comments).filter(c => c.projectId === projectId).length
-        },
-
-        /** Count comments in a specific session. */
-        countBySession: (state) => (projectId, sessionId) => {
-            return Object.values(state.comments).filter(c =>
-                c.projectId === projectId && c.sessionId === sessionId
-            ).length
-        },
-
         /** Get all comments for a session (across all files/sources). */
         getCommentsBySession: (state) => (projectId, sessionId) => {
             return Object.values(state.comments).filter(c =>
@@ -76,32 +86,76 @@ export const useCodeCommentsStore = defineStore('codeComments', {
             )
         },
 
-        /** Count comments for a source tab (files/git/tool) within a session. */
-        countBySource: (state) => (projectId, sessionId, source) => {
-            return Object.values(state.comments).filter(c =>
-                c.projectId === projectId && c.sessionId === sessionId && c.source === source
-            ).length
+        // ─── Cached hierarchical count getters (O(1) lookups) ────────────
+
+        /** Count all comments in a project. */
+        countByProject: (state) => (projectId) => {
+            return state.counts.byProject[projectId] || 0
         },
 
-        /** Count comments for a specific source reference (commit SHA, tool use ID) within a session+source. */
+        /** Count comments in a specific session. */
+        countBySession: (state) => (projectId, sessionId) => {
+            return state.counts.bySession[`${projectId}\0${sessionId}`] || 0
+        },
+
+        /** Count comments for a source tab (files/git/tool) within a session. */
+        countBySource: (state) => (projectId, sessionId, source) => {
+            return state.counts.bySource[`${projectId}\0${sessionId}\0${source}`] || 0
+        },
+
+        /** Count comments for a specific source reference within a session+source. */
         countBySourceRef: (state) => (projectId, sessionId, source, sourceRef) => {
-            return Object.values(state.comments).filter(c =>
-                c.projectId === projectId && c.sessionId === sessionId &&
-                c.source === source && c.sourceRef === (sourceRef ?? '')
-            ).length
+            return state.counts.bySourceRef[`${projectId}\0${sessionId}\0${source}\0${sourceRef ?? ''}`] || 0
         },
 
         /** Count comments for a specific file within a full context. */
         countByFile: (state) => (projectId, sessionId, source, sourceRef, filePath) => {
-            return Object.values(state.comments).filter(c =>
-                c.projectId === projectId && c.sessionId === sessionId &&
-                c.source === source && c.sourceRef === (sourceRef ?? '') &&
-                c.filePath === filePath
-            ).length
+            return state.counts.byFile[`${projectId}\0${sessionId}\0${source}\0${sourceRef ?? ''}\0${filePath}`] || 0
         },
     },
 
     actions: {
+        // ─── Count cache management ─────────────────────────────────────
+
+        /** Rebuild all count caches from scratch (called once at hydration). */
+        _rebuildCounts() {
+            const caches = [
+                this.counts.byProject = {},
+                this.counts.bySession = {},
+                this.counts.bySource = {},
+                this.counts.bySourceRef = {},
+                this.counts.byFile = {},
+            ]
+            for (const comment of Object.values(this.comments)) {
+                COUNT_KEY_BUILDERS.forEach((fn, i) => {
+                    const k = fn(comment)
+                    caches[i][k] = (caches[i][k] || 0) + 1
+                })
+            }
+        },
+
+        /** Increment counts for a comment (called on add). */
+        _incrementCounts(comment) {
+            const caches = [this.counts.byProject, this.counts.bySession, this.counts.bySource, this.counts.bySourceRef, this.counts.byFile]
+            COUNT_KEY_BUILDERS.forEach((fn, i) => {
+                const k = fn(comment)
+                caches[i][k] = (caches[i][k] || 0) + 1
+            })
+        },
+
+        /** Decrement counts for a comment (called on remove). */
+        _decrementCounts(comment) {
+            const caches = [this.counts.byProject, this.counts.bySession, this.counts.bySource, this.counts.bySourceRef, this.counts.byFile]
+            COUNT_KEY_BUILDERS.forEach((fn, i) => {
+                const k = fn(comment)
+                const newVal = (caches[i][k] || 0) - 1
+                if (newVal <= 0) delete caches[i][k]
+                else caches[i][k] = newVal
+            })
+        },
+
+        // ─── CRUD actions ───────────────────────────────────────────────
+
         /**
          * Hydrate the store from IndexedDB at app startup.
          */
@@ -114,6 +168,7 @@ export const useCodeCommentsStore = defineStore('codeComments', {
                     comments[key] = comment
                 }
                 this.comments = comments
+                this._rebuildCounts()
             } catch (err) {
                 console.error('[codeComments] Failed to hydrate from IndexedDB:', err)
             }
@@ -123,6 +178,7 @@ export const useCodeCommentsStore = defineStore('codeComments', {
          * Add a new comment (empty content). Writes to IndexedDB immediately.
          * @param {Object} context - { projectId, sessionId, filePath, source, sourceRef }
          * @param {number} lineNumber
+         * @param {string} [lineText]
          */
         addComment(context, lineNumber, lineText) {
             const commentData = {
@@ -141,6 +197,7 @@ export const useCodeCommentsStore = defineStore('codeComments', {
             if (this.comments[key]) return // already exists
 
             this.comments[key] = commentData
+            this._incrementCounts(commentData)
             // Save the plain object (before Vue wraps it in a reactive proxy)
             // — IndexedDB's structured clone cannot handle Proxy objects.
             saveCodeComment({ ...commentData }).catch(err =>
@@ -188,6 +245,8 @@ export const useCodeCommentsStore = defineStore('codeComments', {
             clearTimeout(_debouncers[key])
             delete _debouncers[key]
 
+            const comment = this.comments[key]
+            if (comment) this._decrementCounts(comment)
             delete this.comments[key]
             deleteCodeComment(buildKeyArray(fields)).catch(err =>
                 console.error('[codeComments] Failed to delete:', err)
@@ -198,11 +257,12 @@ export const useCodeCommentsStore = defineStore('codeComments', {
         removeAllSessionComments(projectId, sessionId) {
             const keys = Object.entries(this.comments)
                 .filter(([, c]) => c.projectId === projectId && c.sessionId === sessionId)
-                .map(([key, c]) => ({ key, fields: { projectId: c.projectId, sessionId: c.sessionId, filePath: c.filePath, source: c.source, sourceRef: c.sourceRef, lineNumber: c.lineNumber } }))
+                .map(([key, c]) => ({ key, comment: c, fields: { projectId: c.projectId, sessionId: c.sessionId, filePath: c.filePath, source: c.source, sourceRef: c.sourceRef, lineNumber: c.lineNumber } }))
 
-            for (const { key, fields } of keys) {
+            for (const { key, comment, fields } of keys) {
                 clearTimeout(_debouncers[key])
                 delete _debouncers[key]
+                this._decrementCounts(comment)
                 delete this.comments[key]
                 deleteCodeComment(buildKeyArray(fields)).catch(err =>
                     console.error('[codeComments] Failed to delete:', err)
