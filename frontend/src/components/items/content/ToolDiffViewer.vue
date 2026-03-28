@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, useId } from 'vue'
+import { ref, computed, watch, useId, inject } from 'vue'
 import DiffEditor from '../../DiffEditor.vue'
 import CodeEditor from '../../CodeEditor.vue'
 import AppTooltip from '../../AppTooltip.vue'
@@ -16,6 +16,19 @@ const props = defineProps({
     modified: { type: String, default: '' },
     /** File path for language detection */
     filePath: { type: String, default: null },
+})
+
+const toolContext = inject('codeCommentToolContext', null)
+
+const commentContext = computed(() => {
+    if (!toolContext || !props.filePath) return null
+    return {
+        projectId: toolContext.projectId,
+        sessionId: toolContext.sessionId,
+        source: 'tool',
+        sourceRef: toolContext.toolUseId,
+        filePath: props.filePath,
+    }
 })
 
 const searchButtonId = useId()
@@ -114,6 +127,7 @@ function openSearch() {
                     :side-by-side="effectiveSideBySide"
                     :collapse-unchanged="true"
                     :panel-container="searchPanelEl"
+                    :comment-context="commentContext"
                 />
                 <CodeEditor
                     v-else
@@ -122,6 +136,7 @@ function openSearch() {
                     :file-path="filePath"
                     :read-only="true"
                     :word-wrap="wordWrap"
+                    :comment-context="commentContext"
                 />
             </template>
         </div>

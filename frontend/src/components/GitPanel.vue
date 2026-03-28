@@ -1026,6 +1026,7 @@ onMounted(() => {
                             :diff-read-only="!isViewingIndex"
                             :initial-word-wrap="diffWordWrap"
                             :initial-side-by-side="diffSideBySide"
+                            :commit-sha="isViewingIndex ? null : selectedCommit?.hash ?? null"
                             @revert="fetchDiff(selectedFile)"
                             @update:word-wrap="diffWordWrap = $event"
                             @update:side-by-side="diffSideBySide = $event"

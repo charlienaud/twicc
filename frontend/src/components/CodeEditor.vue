@@ -5,12 +5,14 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, toRefs, nextTick, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, toRefs, nextTick, watch, inject, onMounted, onBeforeUnmount } from 'vue'
 import { EditorView, keymap } from '@codemirror/view'
-import { EditorSelection, Transaction } from '@codemirror/state'
+import { EditorSelection, Transaction, Compartment } from '@codemirror/state'
 import { undoDepth } from '@codemirror/commands'
 import { resolveLanguage, detectIndent, useCodeMirrorExtensions, useSettingsWatcher, toggleSearchPanel } from '../composables/useCodeMirror'
+import { createCodeCommentsExtension, syncCommentsEffect } from '../extensions/codeComments'
 import { useSettingsStore } from '../stores/settings'
+import { useCodeCommentsStore, formatComment, formatAllComments } from '../stores/codeComments'
 
 // ─── View state cache (module-level, shared across instances) ────────────────
 
@@ -28,6 +30,9 @@ const props = defineProps({
     lineNumbers: { type: Boolean, default: true },
     saveViewState: { type: Boolean, default: false },
     extensions: { type: Array, default: () => [] },
+    /** Comment context for inline annotations. Null = comments disabled.
+     *  Shape: { source: 'files'|'git'|'tool', filePath: string, commitSha: string|null, toolUseId: string|null } */
+    commentContext: { type: Object, default: null },
 })
 
 // ─── Emits ───────────────────────────────────────────────────────────────────
@@ -94,11 +99,43 @@ async function applyLanguage(filePath, language) {
 // ─── Extension setup (called once in onMounted) ───────────────────────────────
 
 const settingsStore = useSettingsStore()
+const codeCommentsStore = useCodeCommentsStore()
+const insertTextAtCursor = inject('insertTextAtCursor', null)
 const { readOnly, wordWrap, lineNumbers } = toRefs(props)
 const cmExtensions = useCodeMirrorExtensions(
     { readOnly, wordWrap, lineNumbers },
     { initialTheme: settingsStore.getEffectiveTheme, initialFontSize: settingsStore.getFontSize },
 )
+
+const commentCompartment = new Compartment()
+
+function buildCommentExt(context) {
+    if (!context) return []
+    const existingComments = codeCommentsStore.getCommentsForContext(context)
+    return createCodeCommentsExtension({
+        initialComments: existingComments.map(c => ({ lineNumber: c.lineNumber, content: c.content, lineText: c.lineText || '' })),
+        onAdd: (lineNumber, lineText) => codeCommentsStore.addComment(context, lineNumber, lineText),
+        onUpdate: (lineNumber, content) => codeCommentsStore.updateComment(context, lineNumber, content),
+        onRemove: (lineNumber) => codeCommentsStore.removeComment(context, lineNumber),
+        onAddToMessage: insertTextAtCursor ? (lineNumber) => {
+            const comments = codeCommentsStore.getCommentsForContext(context)
+            const comment = comments.find(c => c.lineNumber === lineNumber)
+            if (comment) {
+                insertTextAtCursor(formatComment(comment) + '\n')
+                codeCommentsStore.removeComment(context, lineNumber)
+            }
+        } : null,
+        onAddAllToMessage: insertTextAtCursor ? () => {
+            const allComments = codeCommentsStore.getCommentsBySession(context.projectId, context.sessionId)
+            if (allComments.length > 0) {
+                insertTextAtCursor(formatAllComments(allComments) + '\n')
+                codeCommentsStore.removeAllSessionComments(context.projectId, context.sessionId)
+            }
+        } : null,
+        getSessionCommentCount: () => codeCommentsStore.getCommentsBySession(context.projectId, context.sessionId)
+                .filter(c => c.content.trim()).length,
+    })
+}
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -137,10 +174,11 @@ onMounted(async () => {
         ...cmExtensions.extensions,
         saveKeymap,
         updateListener,
+        commentCompartment.of(buildCommentExt(props.commentContext)),
         ...props.extensions,
     ]
 
-    // 5. Create EditorView
+    // 6. Create EditorView
     // Force root: document so that style-mod injects CSS into the document head,
     // not into a Web Awesome shadow root (CM6's getRoot() follows assignedSlot
     // and lands in wa-split-panel's shadow DOM, where styles don't apply to
@@ -152,18 +190,18 @@ onMounted(async () => {
         root: document,
     })
 
-    // 6. Apply resolved language into the compartment
+    // 7. Apply resolved language into the compartment
     if (langExtension) {
         cmExtensions.reconfigure(view.value, 'language', langExtension)
     }
 
-    // 6b. Detect and apply indent unit from file content
+    // 7b. Detect and apply indent unit from file content
     cmExtensions.reconfigure(view.value, 'indentUnit', detectIndent(props.modelValue))
 
-    // 7. Set up reactive theme/fontSize watchers
+    // 8. Set up reactive theme/fontSize watchers
     _stopSettingsWatcher = useSettingsWatcher(() => view.value, cmExtensions)
 
-    // 8. Emit ready
+    // 9. Emit ready
     emit('ready', { view: view.value })
 })
 
@@ -241,6 +279,46 @@ watch(() => props.lineNumbers, (newLineNumbers) => {
     if (!view.value) return
     cmExtensions.reconfigure(view.value, 'lineNumbers', newLineNumbers)
 })
+
+// Code comments: reconfigure extension when context changes
+watch(() => props.commentContext, (newContext) => {
+    if (!view.value) return
+    view.value.dispatch({
+        effects: commentCompartment.reconfigure(buildCommentExt(newContext)),
+    })
+})
+
+// Code comments: sync decorations when store changes (handles late hydration)
+watch(
+    () => props.commentContext ? codeCommentsStore.getCommentsForContext(props.commentContext) : null,
+    (comments) => {
+        if (!view.value || !comments) return
+        view.value.dispatch({
+            effects: syncCommentsEffect.of(
+                comments.map(c => ({ lineNumber: c.lineNumber, content: c.content, lineText: c.lineText || '' }))
+            ),
+        })
+    },
+)
+
+// Code comments: broadcast session-wide "with content" count changes to CM6 widgets.
+// This watcher reacts to ALL comment content changes across the session (any source,
+// any file) and bridges Pinia reactivity → CM6 widget DOM via a custom event.
+// It only fires on threshold transitions (empty↔non-empty), not on every keystroke.
+watch(
+    () => {
+        if (!props.commentContext) return 0
+        return codeCommentsStore.getCommentsBySession(
+            props.commentContext.projectId, props.commentContext.sessionId
+        ).filter(c => c.content.trim()).length
+    },
+    (newCount) => {
+        if (!view.value) return
+        view.value.dom.dispatchEvent(new CustomEvent(
+            'code-comment-count-changed', { detail: { count: newCount } }
+        ))
+    },
+)
 
 // ─── Exposed API ─────────────────────────────────────────────────────────────
 

@@ -1183,6 +1183,7 @@ async function handleForwardedDrop({ files, text }) {
 defineExpose({
     getScrollerElement,
     handleForwardedDrop,
+    insertTextAtCursor: (text) => messageInputRef.value?.insertTextAtCursor(text),
 })
 </script>
 

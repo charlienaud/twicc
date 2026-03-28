@@ -2,10 +2,11 @@
 // IndexedDB wrapper for draft messages, draft sessions, and draft medias persistence
 
 const DB_NAME = 'twicc'
-const DB_VERSION = 3
+const DB_VERSION = 5
 const DRAFT_MESSAGES_STORE = 'draftMessages'
 const DRAFT_SESSIONS_STORE = 'draftSessions'
 const DRAFT_MEDIAS_STORE = 'draftMedias'
+const CODE_COMMENTS_STORE = 'codeComments'
 
 let dbPromise = null
 
@@ -13,7 +14,7 @@ let dbPromise = null
  * Opens/initializes the IndexedDB database (lazy singleton).
  * @returns {Promise<IDBDatabase>}
  */
-function getDb() {
+export function getDb() {
     if (!dbPromise) {
         dbPromise = new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, DB_VERSION)
@@ -37,6 +38,13 @@ function getDb() {
                     // Index on sessionId to retrieve all medias for a session
                     store.createIndex('sessionId', 'sessionId', { unique: false })
                 }
+                // Recreate codeComments store with compound keyPath (v5)
+                if (db.objectStoreNames.contains(CODE_COMMENTS_STORE)) {
+                    db.deleteObjectStore(CODE_COMMENTS_STORE)
+                }
+                db.createObjectStore(CODE_COMMENTS_STORE, {
+                    keyPath: ['projectId', 'sessionId', 'filePath', 'source', 'sourceRef', 'lineNumber']
+                })
             }
         })
     }
@@ -320,3 +328,5 @@ export async function getAllDraftMedias() {
         request.onerror = () => reject(request.error)
     })
 }
+
+export { CODE_COMMENTS_STORE }

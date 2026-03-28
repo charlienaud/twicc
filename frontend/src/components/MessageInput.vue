@@ -8,6 +8,7 @@ import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSock
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
 import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, EFFORT_DISPLAY_LABELS, THINKING_LABELS, THINKING_DISPLAY_LABELS, CLAUDE_IN_CHROME_LABELS, CLAUDE_IN_CHROME_DISPLAY_LABELS, CONTEXT_MAX, CONTEXT_MAX_LABELS } from '../constants'
+import { useCodeCommentsStore, formatAllComments } from '../stores/codeComments'
 import MediaThumbnailGroup from './MediaThumbnailGroup.vue'
 import AppTooltip from './AppTooltip.vue'
 import FilePickerPopup from './FilePickerPopup.vue'
@@ -28,6 +29,7 @@ const router = useRouter()
 const route = useRoute()
 const store = useDataStore()
 const settingsStore = useSettingsStore()
+const codeCommentsStore = useCodeCommentsStore()
 
 // Detect "All Projects" mode from route name
 const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
@@ -1090,11 +1092,52 @@ function insertTextAtCursor(text) {
     })
 }
 
+// ─── Code comments: "Add all comments to message" button ─────────────────────
+
+const sessionCommentsWithContent = computed(() =>
+    codeCommentsStore.getCommentsBySession(props.projectId, props.sessionId)
+        .filter(c => c.content.trim())
+)
+
+const commentsWithContentCount = computed(() => sessionCommentsWithContent.value.length)
+
+function clearAllSessionComments() {
+    codeCommentsStore.removeAllSessionComments(props.projectId, props.sessionId)
+}
+
+function addAllCommentsToMessage() {
+    const comments = sessionCommentsWithContent.value
+    if (comments.length === 0) return
+    insertTextAtCursor(formatAllComments(comments) + '\n')
+    codeCommentsStore.removeAllSessionComments(props.projectId, props.sessionId)
+}
+
 defineExpose({ insertTextAtCursor })
 </script>
 
 <template>
     <div class="message-input">
+        <div v-if="commentsWithContentCount > 0" class="code-comments-bar">
+            <wa-button
+                variant="brand"
+                appearance="filled-outlined"
+                size="small"
+                @click="addAllCommentsToMessage"
+            >
+                {{ commentsWithContentCount === 1
+                    ? 'Add comment to message'
+                    : `Add all comments (${commentsWithContentCount}) to message`
+                }}
+            </wa-button>
+            <wa-button
+                variant="neutral"
+                appearance="outlined"
+                size="small"
+                @click="clearAllSessionComments"
+            >
+                {{ commentsWithContentCount === 1 ? 'Clear comment' : 'Clear comments' }}
+            </wa-button>
+        </div>
         <wa-textarea
             ref="textareaRef"
             :id="textareaAnchorId"
@@ -1348,6 +1391,13 @@ defineExpose({ insertTextAtCursor })
     padding: var(--wa-space-s);
     background: var(--main-header-footer-bg-color);
     container: message-input / inline-size;
+}
+
+.code-comments-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wa-space-xs);
+    align-items: center;
 }
 
 .message-input wa-textarea::part(textarea) {

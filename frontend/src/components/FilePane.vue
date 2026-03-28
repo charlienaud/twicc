@@ -15,6 +15,8 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    /** Git commit SHA (null = index/uncommitted, undefined = not a git context) */
+    commitSha: { type: String, default: undefined },
     // --- Diff mode props ---
     diffMode: {
         type: Boolean,
@@ -66,6 +68,28 @@ const apiPrefix = computed(() => {
         return `/api/projects/${props.projectId}`
     }
     return `/api/projects/${props.projectId}/sessions/${props.sessionId}`
+})
+
+const commentContext = computed(() => {
+    if (!props.filePath) return null
+    if (props.commitSha !== undefined) {
+        // Git context
+        return {
+            projectId: props.projectId,
+            sessionId: props.sessionId,
+            source: 'git',
+            sourceRef: props.commitSha ?? '',
+            filePath: props.filePath,
+        }
+    }
+    // Files context
+    return {
+        projectId: props.projectId,
+        sessionId: props.sessionId,
+        source: 'files',
+        sourceRef: '',
+        filePath: props.filePath,
+    }
 })
 
 const settingsStore = useSettingsStore()
@@ -575,6 +599,7 @@ function goToNextDiff() {
                 :word-wrap="wordWrap"
                 :side-by-side="effectiveSideBySide"
                 :collapse-unchanged="true"
+                :comment-context="commentContext"
                 @update:modified="onDiffModifiedChange"
                 @save="save"
                 @ready="onDiffReady"
@@ -591,6 +616,7 @@ function goToNextDiff() {
                 :word-wrap="wordWrap"
                 :line-numbers="true"
                 :save-view-state="false"
+                :comment-context="commentContext"
                 @save="save"
                 @ready="onEditorReady"
             />

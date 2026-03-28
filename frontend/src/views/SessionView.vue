@@ -155,6 +155,11 @@ async function viewFileInFilesTab(absolutePath, { lineNum = null } = {}) {
 
 provide('viewFileInFilesTab', viewFileInFilesTab)
 
+function insertTextAtCursor(text) {
+    sessionItemsListRef.value?.insertTextAtCursor(text)
+}
+provide('insertTextAtCursor', insertTextAtCursor)
+
 // Current session from route params
 // IMPORTANT: projectId and sessionId are captured at creation time (not reactive
 // computeds from route.params) because with KeepAlive, the route changes globally

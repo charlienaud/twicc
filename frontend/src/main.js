@@ -44,6 +44,7 @@ import { router } from './router'
 import App from './App.vue'
 import { initSettings } from './stores/settings'
 import { useDataStore } from './stores/data'
+import { useCodeCommentsStore } from './stores/codeComments'
 
 // Notivue CSS
 import 'notivue/notification.css'
@@ -96,5 +97,9 @@ dataStore.hydrateDraftSessions().then(() => {
     dataStore.hydrateDraftMessages()
     dataStore.hydrateAttachments()
 })
+
+// Hydrate code comments from IndexedDB (async, non-blocking)
+const codeCommentsStore = useCodeCommentsStore()
+codeCommentsStore.hydrateComments()
 
 app.mount('#app')

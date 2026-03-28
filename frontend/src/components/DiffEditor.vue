@@ -9,13 +9,15 @@
 </template>
 
 <script setup>
-import { ref, nextTick, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, nextTick, watch, inject, onMounted, onBeforeUnmount } from 'vue'
 import { EditorView, keymap, panels } from '@codemirror/view'
 import { EditorSelection } from '@codemirror/state'
 import { MergeView, unifiedMergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge'
 import { openSearchPanel, getSearchQuery, setSearchQuery, searchPanelOpen, SearchQuery } from '@codemirror/search'
 import { resolveLanguage, useCodeMirrorExtensions, useSettingsWatcher, toggleSearchPanel } from '../composables/useCodeMirror'
+import { createCodeCommentsExtension, syncCommentsEffect } from '../extensions/codeComments'
 import { useSettingsStore } from '../stores/settings'
+import { useCodeCommentsStore, formatComment, formatAllComments } from '../stores/codeComments'
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +35,8 @@ const props = defineProps({
      *  When provided, panels are redirected there instead of the internal container.
      *  Useful when the DiffEditor is inside a scrollable container where sticky fails. */
     panelContainer: { type: Object, default: null },
+    /** Comment context for inline annotations. Null = comments disabled. */
+    commentContext: { type: Object, default: null },
 })
 
 // ─── Emits ───────────────────────────────────────────────────────────────────
@@ -67,6 +71,8 @@ let _createGeneration = 0
 // the modified side (b). For unified mode, only cmB is used (the single EditorView).
 
 const settingsStore = useSettingsStore()
+const codeCommentsStore = useCodeCommentsStore()
+const insertTextAtCursor = inject('insertTextAtCursor', null)
 const initialSettings = { initialTheme: settingsStore.getEffectiveTheme, initialFontSize: settingsStore.getFontSize }
 
 // Original side (a) — always read-only
@@ -86,6 +92,35 @@ const cmB = useCodeMirrorExtensions({
 // heavily-changed files. The timeout acts as a safety net to avoid blocking the
 // main thread on pathological inputs.
 const diffConfig = { scanLimit: 10000, timeout: 2000 }
+
+function buildCommentExtension() {
+    if (!props.commentContext) return []
+    const ctx = props.commentContext
+    const existingComments = codeCommentsStore.getCommentsForContext(ctx)
+    return createCodeCommentsExtension({
+        initialComments: existingComments.map(c => ({ lineNumber: c.lineNumber, content: c.content, lineText: c.lineText || '' })),
+        onAdd: (lineNumber, lineText) => codeCommentsStore.addComment(ctx, lineNumber, lineText),
+        onUpdate: (lineNumber, content) => codeCommentsStore.updateComment(ctx, lineNumber, content),
+        onRemove: (lineNumber) => codeCommentsStore.removeComment(ctx, lineNumber),
+        onAddToMessage: insertTextAtCursor ? (lineNumber) => {
+            const comments = codeCommentsStore.getCommentsForContext(ctx)
+            const comment = comments.find(c => c.lineNumber === lineNumber)
+            if (comment) {
+                insertTextAtCursor(formatComment(comment) + '\n')
+                codeCommentsStore.removeComment(ctx, lineNumber)
+            }
+        } : null,
+        onAddAllToMessage: insertTextAtCursor ? () => {
+            const allComments = codeCommentsStore.getCommentsBySession(ctx.projectId, ctx.sessionId)
+            if (allComments.length > 0) {
+                insertTextAtCursor(formatAllComments(allComments) + '\n')
+                codeCommentsStore.removeAllSessionComments(ctx.projectId, ctx.sessionId)
+            }
+        } : null,
+        getSessionCommentCount: () => codeCommentsStore.getCommentsBySession(ctx.projectId, ctx.sessionId)
+                .filter(c => c.content.trim()).length,
+    })
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -195,6 +230,7 @@ async function createSideBySideView() {
         ...(langExtension ? [langExtension] : []),
         saveKeymap,
         updateListener,
+        ...buildCommentExtension(),
         ...props.extensions,
     ]
 
@@ -240,6 +276,7 @@ async function createUnifiedView() {
         unifiedExt,
         saveKeymap,
         updateListener,
+        ...buildCommentExtension(),
         ...props.extensions,
     ]
 
@@ -383,6 +420,37 @@ watch(() => props.language, async () => {
     const origView = getOriginalView()
     if (origView) cmA.reconfigure(origView, 'language', langExtension)
 })
+
+// Code comments: sync decorations when store changes (handles late hydration)
+watch(
+    () => props.commentContext ? codeCommentsStore.getCommentsForContext(props.commentContext) : null,
+    (comments) => {
+        const v = getModifiedView()
+        if (!v || !comments) return
+        v.dispatch({
+            effects: syncCommentsEffect.of(
+                comments.map(c => ({ lineNumber: c.lineNumber, content: c.content, lineText: c.lineText || '' }))
+            ),
+        })
+    },
+)
+
+// Code comments: broadcast session-wide "with content" count changes to CM6 widgets.
+watch(
+    () => {
+        if (!props.commentContext) return 0
+        return codeCommentsStore.getCommentsBySession(
+            props.commentContext.projectId, props.commentContext.sessionId
+        ).filter(c => c.content.trim()).length
+    },
+    (newCount) => {
+        const v = getModifiedView()
+        if (!v) return
+        v.dom.dispatchEvent(new CustomEvent(
+            'code-comment-count-changed', { detail: { count: newCount } }
+        ))
+    },
+)
 
 // ─── Diff navigation ─────────────────────────────────────────────────────────
 

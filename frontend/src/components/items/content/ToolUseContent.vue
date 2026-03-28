@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, inject, watch, watchEffect, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, ref, inject, provide, watch, watchEffect, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
@@ -62,6 +62,13 @@ const props = defineProps({
         type: String,
         default: null
     }
+})
+
+// Provide tool context for code comments in child editors (ToolDiffViewer)
+provide('codeCommentToolContext', {
+    toolUseId: props.toolId,
+    sessionId: props.sessionId,
+    projectId: props.projectId,
 })
 
 // Polling configuration
