@@ -79,10 +79,13 @@ export const useCodeCommentsStore = defineStore('codeComments', {
             )
         },
 
-        /** Get all comments for a session (across all files/sources). */
+        /** Get all comments with content for a session (across all files/sources).
+         *  Only returns comments with non-empty trimmed content — used for
+         *  indicators and "add to message" features. Empty textareas are still
+         *  stored and displayed as widgets, but don't signal to the user. */
         getCommentsBySession: (state) => (projectId, sessionId) => {
             return Object.values(state.comments).filter(c =>
-                c.projectId === projectId && c.sessionId === sessionId
+                c.projectId === projectId && c.sessionId === sessionId && c.content?.trim()
             )
         },
 
@@ -117,7 +120,9 @@ export const useCodeCommentsStore = defineStore('codeComments', {
     actions: {
         // ─── Count cache management ─────────────────────────────────────
 
-        /** Rebuild all count caches from scratch (called once at hydration). */
+        /** Rebuild all count caches from scratch (called once at hydration).
+         *  Only counts comments with non-empty trimmed content (indicators
+         *  should only signal "you have content to send", not empty textareas). */
         _rebuildCounts() {
             const caches = [
                 this.counts.byProject = {},
@@ -127,6 +132,7 @@ export const useCodeCommentsStore = defineStore('codeComments', {
                 this.counts.byFile = {},
             ]
             for (const comment of Object.values(this.comments)) {
+                if (!comment.content?.trim()) continue
                 COUNT_KEY_BUILDERS.forEach((fn, i) => {
                     const k = fn(comment)
                     caches[i][k] = (caches[i][k] || 0) + 1
@@ -134,8 +140,9 @@ export const useCodeCommentsStore = defineStore('codeComments', {
             }
         },
 
-        /** Increment counts for a comment (called on add). */
+        /** Increment counts for a comment (only if it has content). */
         _incrementCounts(comment) {
+            if (!comment.content?.trim()) return
             const caches = [this.counts.byProject, this.counts.bySession, this.counts.bySource, this.counts.bySourceRef, this.counts.byFile]
             COUNT_KEY_BUILDERS.forEach((fn, i) => {
                 const k = fn(comment)
@@ -143,8 +150,9 @@ export const useCodeCommentsStore = defineStore('codeComments', {
             })
         },
 
-        /** Decrement counts for a comment (called on remove). */
+        /** Decrement counts for a comment (only if it had content). */
         _decrementCounts(comment) {
+            if (!comment.content?.trim()) return
             const caches = [this.counts.byProject, this.counts.bySession, this.counts.bySource, this.counts.bySourceRef, this.counts.byFile]
             COUNT_KEY_BUILDERS.forEach((fn, i) => {
                 const k = fn(comment)
@@ -219,8 +227,16 @@ export const useCodeCommentsStore = defineStore('codeComments', {
             const comment = this.comments[key]
             if (!comment) return
 
+            // Track content transition for count cache updates
+            const hadContent = !!comment.content?.trim()
+            const hasContent = !!content?.trim()
+
             comment.content = content
             comment.updatedAt = Date.now()
+
+            // Update counts on empty↔non-empty transitions
+            if (!hadContent && hasContent) this._incrementCounts(comment)
+            else if (hadContent && !hasContent) this._decrementCounts(comment)
 
             // Debounce IndexedDB write — use toRaw() to unwrap the reactive
             // proxy before saving; IndexedDB's structured clone cannot handle Proxies.
