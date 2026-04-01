@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Custom combos & snippets for terminal: user-defined key combos/sequences (mobile) and text global or project-scoped snippets (mobile & desktop)
 - Hover over a session or the Chat tab while dragging files/text for 1s to auto-switch, then drop to attach
 - Inline code comments: click a line number to annotate code, then send formatted comments to Claude via the message input
+- Keyboard shortcuts for tab navigation: Alt+Shift+1-4 (Chat/Files/Git/Terminal), Alt+Shift+←/→ (Left tab/ Right tab), Alt+Shift+↑/↓ (last visited tab)
 
 ### Changed
 

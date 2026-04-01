@@ -63,6 +63,12 @@ const searchOverlayRef = ref(null)
 // Route names where Ctrl+F opens in-session search (main chat tab only)
 const SESSION_CHAT_ROUTES = new Set(['session', 'projects-session'])
 
+// All session route names (for tab keyboard shortcuts: Alt+Shift+{1-4, ←, →, ↑})
+const SESSION_ROUTES = new Set([
+    'session', 'session-subagent', 'session-files', 'session-git', 'session-terminal',
+    'projects-session', 'projects-session-subagent', 'projects-session-files', 'projects-session-git', 'projects-session-terminal',
+])
+
 function handleGlobalKeydown(e) {
     const modKey = settingsStore.isMac ? e.metaKey : e.ctrlKey
     if (modKey && e.key === 'k') {
@@ -86,6 +92,28 @@ function handleGlobalKeydown(e) {
                 e.preventDefault()
                 e.stopPropagation()
             }
+        }
+    }
+    // Alt+Shift+{1-4, ←, →, ↑, ↓}: tab navigation within a session.
+    // Dispatches a custom event handled by the active SessionView instance.
+    if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && SESSION_ROUTES.has(route.name)) {
+        let tabAction = null
+        // Use e.code (physical key) for digits — e.key depends on keyboard layout
+        // and modifiers (e.g. French AZERTY: Alt+Shift+number row produces unexpected e.key values).
+        const digitMatch = e.code.match(/^(?:Digit|Numpad)([1-4])$/)
+        if (digitMatch) {
+            tabAction = { type: 'direct', index: parseInt(digitMatch[1]) }
+        } else if (e.key === 'ArrowLeft') {
+            tabAction = { type: 'prev' }
+        } else if (e.key === 'ArrowRight') {
+            tabAction = { type: 'next' }
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            tabAction = { type: 'last-visited' }
+        }
+        if (tabAction) {
+            e.preventDefault()
+            e.stopPropagation()
+            window.dispatchEvent(new CustomEvent('twicc:tab-shortcut', { detail: tabAction }))
         }
     }
 }

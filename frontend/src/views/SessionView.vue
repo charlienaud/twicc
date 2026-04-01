@@ -69,6 +69,12 @@ function restoreActiveTab() {
 onMounted(() => {
     // Mark session as viewed on first render
     notifySessionViewed(sessionId.value)
+    // Listen for tab keyboard shortcuts (dispatched by App.vue)
+    window.addEventListener('twicc:tab-shortcut', handleTabShortcut)
+})
+
+onBeforeUnmount(() => {
+    window.removeEventListener('twicc:tab-shortcut', handleTabShortcut)
 })
 
 onActivated(() => {
@@ -322,6 +328,83 @@ function switchToTabAndCollapse(panel) {
     switchToTab(panel)
     if (sessionHeaderRef.value?.isCompactExpanded) {
         sessionHeaderRef.value.isCompactExpanded = false
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Keyboard shortcuts: tab navigation (Alt+Shift+1-4, ←/→, ↑)
+// Events dispatched by App.vue, handled here by the active instance only.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Ordered list of all visible tabs (for sequential ←/→ navigation).
+// Matches the visual order in the wa-tab-group: main, subagents, files, [git], terminal.
+const orderedTabs = computed(() => {
+    const tabs = ['main']
+    for (const tab of openSubagentTabs.value) {
+        tabs.push(tab.id)
+    }
+    tabs.push('files')
+    if (hasGitRepo.value) tabs.push('git')
+    tabs.push('terminal')
+    return tabs
+})
+
+// Tab visit history for Alt+Shift+↑ (last-visited, Alt+Tab-like behavior).
+// Plain array (not reactive) — no template depends on it.
+// Persists as long as the component is KeepAlive'd.
+const tabHistory = []
+const MAX_TAB_HISTORY = 50
+
+function pushTabHistory(tabId) {
+    if (tabHistory.length > 0 && tabHistory[tabHistory.length - 1] === tabId) return
+    tabHistory.push(tabId)
+    if (tabHistory.length > MAX_TAB_HISTORY) tabHistory.shift()
+}
+
+// Track tab transitions for history (separate from the store sync watcher).
+// oldTabId is undefined on the first call, so we guard with `if (oldTabId)`.
+watch(activeTabId, (newTabId, oldTabId) => {
+    if (!isActive.value) return
+    if (route.params.sessionId !== sessionId.value) return
+    if (oldTabId) pushTabHistory(oldTabId)
+})
+
+// Direct tab mapping: Alt+Shift+{1,2,3,4} → fixed tabs (subagents are skipped)
+const DIRECT_TAB_MAP = { 1: 'main', 2: 'files', 3: 'git', 4: 'terminal' }
+
+/**
+ * Handle keyboard tab shortcut events dispatched from App.vue.
+ * Only the active SessionView instance processes the event (KeepAlive guard).
+ */
+function handleTabShortcut(event) {
+    if (!isActive.value) return
+
+    const { type, index } = event.detail
+
+    if (type === 'direct') {
+        const targetTab = DIRECT_TAB_MAP[index]
+        if (!targetTab) return
+        if (targetTab === 'git' && !hasGitRepo.value) return
+        switchToTab(targetTab)
+    } else if (type === 'prev' || type === 'next') {
+        const tabs = orderedTabs.value
+        const currentIndex = tabs.indexOf(activeTabId.value)
+        if (currentIndex === -1) return
+        const newIndex = type === 'next'
+            ? (currentIndex + 1) % tabs.length
+            : (currentIndex - 1 + tabs.length) % tabs.length
+        switchToTab(tabs[newIndex])
+    } else if (type === 'last-visited') {
+        const tabs = orderedTabs.value
+        // Walk history backwards to find the most recent tab that still exists
+        // and isn't the currently active one
+        for (let i = tabHistory.length - 1; i >= 0; i--) {
+            const tabId = tabHistory[i]
+            if (tabId !== activeTabId.value && tabs.includes(tabId)) {
+                switchToTab(tabId)
+                return
+            }
+        }
     }
 }
 
