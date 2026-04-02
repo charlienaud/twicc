@@ -16,10 +16,14 @@ const props = defineProps({
 const terminalConfigStore = useTerminalConfigStore()
 const dataStore = useDataStore()
 
+// ── Special characters (tedious to type on mobile) ──────────────────
+const SPECIAL_CHARS = ['-', '/', '|', '~', '\\', '_', '*', '&', '.', '+', '↵']
+
 // ── Dialog refs ──────────────────────────────────────────────────────
 const dialogRef = ref(null)
 const saveButtonRef = ref(null)
 const labelInputRef = ref(null)
+const textareaRef = ref(null)
 
 const instanceId = useId()
 const formId = `manage-snippets-form-${instanceId}`
@@ -128,6 +132,25 @@ function cancelForm() {
 /** Extract project ID from a scope string like "project:xxx" */
 function projectIdFromScope(scope) {
     return scope.startsWith('project:') ? scope.slice('project:'.length) : null
+}
+
+// ── Special char insertion ───────────────────────────────────────────
+function insertChar(char) {
+    const insertValue = char === '↵' ? '\n' : char
+    const textarea = textareaRef.value?.shadowRoot?.querySelector('textarea')
+    // Insert at cursor position (or replace selection), fallback to append
+    const start = textarea?.selectionStart ?? formData.value.text.length
+    const end = textarea?.selectionEnd ?? formData.value.text.length
+    const text = formData.value.text
+    formData.value.text = text.slice(0, start) + insertValue + text.slice(end)
+    // Refocus the textarea with cursor right after the inserted char
+    const newPos = start + insertValue.length
+    nextTick(() => {
+        if (textarea) {
+            textarea.focus()
+            textarea.setSelectionRange(newPos, newPos)
+        }
+    })
 }
 
 // ── Validation & save ────────────────────────────────────────────────
@@ -326,6 +349,7 @@ defineExpose({ open, close })
             <div class="form-group">
                 <label class="form-label">Text to send</label>
                 <wa-textarea
+                    ref="textareaRef"
                     :value="formData.text"
                     @input="formData.text = $event.target.value"
                     rows="3"
@@ -333,6 +357,16 @@ defineExpose({ open, close })
                     size="small"
                     class="snippet-textarea"
                 />
+                <!-- Special character picker (for mobile convenience) -->
+                <div class="char-picker-row">
+                    <button
+                        v-for="char in SPECIAL_CHARS"
+                        :key="char"
+                        type="button"
+                        class="picker-key"
+                        @click="insertChar(char)"
+                    >{{ char }}</button>
+                </div>
             </div>
 
             <!-- Append Enter checkbox + Scope dropdown on same row -->
@@ -587,6 +621,43 @@ defineExpose({ open, close })
 
 .snippet-textarea::part(textarea) {
     font-family: var(--wa-font-family-code);
+}
+
+/* ── Special char picker (same style as combo editor's picker-key) ─── */
+.char-picker-row {
+    display: flex;
+    gap: var(--wa-space-2xs);
+    flex-wrap: wrap;
+}
+
+.picker-key {
+    background: var(--wa-color-surface-raised);
+    border: 1px solid var(--wa-color-surface-border);
+    color: var(--wa-color-text-normal);
+    font-family: var(--wa-font-family-code);
+    font-size: var(--wa-font-size-s);
+    height: 1.75rem;
+    min-width: 2rem;
+    padding: 0 var(--wa-space-2xs);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--wa-border-radius-s);
+    cursor: pointer;
+    transition: background-color 0.1s, border-color 0.1s;
+    user-select: none;
+    font-weight: normal;
+    box-shadow: none;
+    margin: 0;
+}
+
+.picker-key:hover {
+    background: color-mix(in srgb, var(--wa-color-surface-raised), var(--wa-color-mix-hover));
+}
+
+.picker-key:active {
+    background: color-mix(in srgb, var(--wa-color-surface-raised), var(--wa-color-mix-active));
+    transform: scale(0.95);
 }
 
 .form-options-row {
