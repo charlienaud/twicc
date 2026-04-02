@@ -23,8 +23,6 @@ from multiprocessing import Event as MPEvent, Process, Queue
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
-from django.db.models import Q
-
 from twicc.startup_progress import broadcast_startup_progress
 
 # NOTE: Django model imports (twicc.core.models, twicc.compute, twicc.compute_batch,
@@ -422,7 +420,7 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
     sessions_to_display = await sync_to_async(
         lambda: set(
             Session.objects.filter(type=SessionType.SESSION)
-            .filter(Q(compute_version__isnull=True) | Q(compute_version__lt=settings.CURRENT_COMPUTE_VERSION))
+            .exclude(compute_version=settings.CURRENT_COMPUTE_VERSION)
             .values_list("id", flat=True)
         )
     )()
@@ -454,7 +452,7 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
     session_ids_to_compute = await sync_to_async(
         lambda: list(
             Session.objects
-            .filter(Q(compute_version__isnull=True) | Q(compute_version__lt=settings.CURRENT_COMPUTE_VERSION))
+            .exclude(compute_version=settings.CURRENT_COMPUTE_VERSION)
             .order_by('-mtime')
             .values_list('id', flat=True)
         )
