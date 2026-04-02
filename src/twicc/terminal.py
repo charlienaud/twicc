@@ -313,6 +313,21 @@ def tmux_set_option(session_id: str, option: str, value: str) -> bool:
         return False
 
 
+def _tmux_set_global_option(option: str, value: str) -> bool:
+    """Set a tmux global (server-wide) option on the twicc socket."""
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "set-option", "-g", option, value],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def tmux_pane_is_alternate(session_id: str) -> bool:
     """Check if the active pane of the active window is in alternate screen mode.
 
@@ -371,6 +386,7 @@ def _configure_tmux_scroll_bindings() -> None:
              "if-shell", "-F", condition, "send-keys -M", alt_branch],
             capture_output=True, timeout=5,
         )
+
 
 
 # ── tmux pane state monitor ──────────────────────────────────────────────
@@ -464,10 +480,17 @@ async def terminal_application(scope, receive, send):
     # ── Accept connection ─────────────────────────────────────────────
     await send({"type": "websocket.accept"})
 
-    # Configure tmux session for scroll support
+    # Configure tmux session for scroll support.
+    # Mouse mode must be on for the frontend's SGR mouse wheel sequences
+    # to be interpreted by tmux (used by both mobile touch and desktop wheel).
+    # Desktop wheel is intercepted by the frontend to batch events and avoid
+    # copy-mode rendering artifacts. Desktop drag selection is also handled
+    # by the frontend in capture phase, so mouse-on doesn't interfere.
     if use_tmux:
-        # Enable mouse mode so wheel events scroll the buffer (not command history)
+        # Force mouse on at both global and session level — ensures correct
+        # state regardless of tmux server's prior configuration.
         await asyncio.to_thread(tmux_set_option, session_id, "mouse", "on")
+        await asyncio.to_thread(_tmux_set_global_option, "mouse", "on")
         # Override default wheel bindings for proper scroll in less/htop/etc.
         await asyncio.to_thread(_configure_tmux_scroll_bindings)
 

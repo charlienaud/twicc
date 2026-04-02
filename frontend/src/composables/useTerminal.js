@@ -236,6 +236,11 @@ export function useTerminal(sessionId) {
     let scrollInertiaId = null
     /** @type {AbortController | null} */
     let touchAbortController = null
+    // Desktop state (tmux only: drag selection + wheel scroll)
+    let desktopDragActive = false
+    let desktopWheelAccumulator = 0
+    /** @type {AbortController | null} */
+    let desktopDragAbortController = null
 
     /**
      * Check whether tmux should actually be used for this session.
@@ -685,6 +690,86 @@ export function useTerminal(sessionId) {
         }
     }
 
+    // ── Desktop mouse drag selection (tmux only) ──────────────────────
+    // When tmux has mouse mode enabled, it captures drag events and
+    // enters copy-mode, breaking xterm.js native selection. These
+    // handlers intercept drag in capture phase to create selection
+    // via terminal.select() instead, reusing the same anchor variables
+    // and updateSelection() as touch selection.
+
+    function onDesktopMouseDown(e) {
+        if (e.button !== 0) return  // only left button
+        desktopDragActive = false
+        const coords = screenToTerminalCoords(e.clientX, e.clientY)
+        selectStartCol = coords.col
+        selectStartRow = coords.row
+    }
+
+    function onDesktopMouseMove(e) {
+        if (!(e.buttons & 1)) return  // left button not held
+
+        if (!desktopDragActive) {
+            desktopDragActive = true
+            terminal?.clearSelection()
+        }
+
+        // Stop event from reaching xterm.js — prevents it from sending
+        // MouseDrag escape sequences to tmux (which would enter copy-mode)
+        e.stopPropagation()
+        e.preventDefault()
+
+        updateSelection(e.clientX, e.clientY)
+    }
+
+    function onDesktopMouseUp(e) {
+        if (desktopDragActive) {
+            desktopDragActive = false
+            e.stopPropagation()
+            e.preventDefault()
+        }
+    }
+
+    /**
+     * Intercept mouse wheel on desktop when in tmux.
+     * Uses the same scrollByLines() as mobile touch scroll — sends
+     * controlled, batched events instead of letting xterm.js forward
+     * rapid-fire wheel events to tmux (which causes copy-mode artifacts).
+     */
+    function onDesktopWheel(e) {
+        e.preventDefault()
+        e.stopPropagation()
+
+        const cellHeight = getCellHeight()
+        if (cellHeight <= 0) return
+
+        // Accumulate pixel delta (same approach as mobile touch scroll)
+        desktopWheelAccumulator += e.deltaY
+        const lines = Math.trunc(desktopWheelAccumulator / cellHeight)
+        if (lines !== 0) {
+            desktopWheelAccumulator -= lines * cellHeight
+            scrollByLines(lines)
+        }
+    }
+
+    function attachDesktopDragListeners() {
+        if (!containerRef.value || settingsStore.isTouchDevice || !shouldUseTmux()) return
+
+        desktopDragAbortController = new AbortController()
+        const signal = desktopDragAbortController.signal
+
+        containerRef.value.addEventListener('mousedown', onDesktopMouseDown, { capture: true, signal })
+        containerRef.value.addEventListener('mousemove', onDesktopMouseMove, { capture: true, signal })
+        containerRef.value.addEventListener('mouseup', onDesktopMouseUp, { capture: true, signal })
+        containerRef.value.addEventListener('wheel', onDesktopWheel, { capture: true, passive: false, signal })
+    }
+
+    function detachDesktopDragListeners() {
+        if (desktopDragAbortController) {
+            desktopDragAbortController.abort()
+            desktopDragAbortController = null
+        }
+    }
+
     /**
      * Initialize the xterm.js Terminal and attach it to the container,
      * then connect the WebSocket.
@@ -831,6 +916,7 @@ export function useTerminal(sessionId) {
 
         // Attach touch listeners for mobile text selection
         attachTouchListeners()
+        attachDesktopDragListeners()
 
         // Connect to the backend
         connectWs()
@@ -1026,6 +1112,7 @@ export function useTerminal(sessionId) {
         intentionalClose = true
 
         detachTouchListeners()
+        detachDesktopDragListeners()
 
         if (resizeObserver) {
             resizeObserver.disconnect()
