@@ -39,6 +39,10 @@ function handleTouchModeChange(event) {
     touchMode.value = event.target.checked ? 'select' : 'scroll'
 }
 
+function handlePaste() {
+    handleExtraKeyPaste()
+}
+
 // Resolve projectId from sessionId
 const session = computed(() => props.sessionId ? dataStore.getSession(props.sessionId) : null)
 const projectId = computed(() => session.value?.project_id)
@@ -128,6 +132,20 @@ watch(
                             Copy
                         </wa-button>
                 </Transition>
+
+                <!-- Paste button -->
+                <wa-button
+                    id="terminal-paste-button"
+                    variant="neutral"
+                    appearance="filled"
+                    size="small"
+                    class="paste-button"
+                    @click="handlePaste"
+                >
+                    <wa-icon slot="start" name="paste" variant="regular"></wa-icon>
+                    Paste
+                </wa-button>
+                <AppTooltip for="terminal-paste-button">Paste from clipboard</AppTooltip>
 
                 <wa-button
                     id="terminal-disconnect-button"
@@ -252,11 +270,13 @@ watch(
     user-select: none;
 }
 
-.copy-button {
+.copy-button,
+.paste-button {
     flex-shrink: 0;
 }
 
-.copy-button::part(base) {
+.copy-button::part(base),
+.paste-button::part(base) {
     --wa-form-control-padding-block: .5em;
     /* Had to force it here, but the same as default one: */
     --wa-form-control-height: round( calc(2 * var(--wa-form-control-padding-block) + 1em * var(--wa-form-control-value-line-height)), 1px );
