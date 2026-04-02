@@ -100,35 +100,34 @@ watch(
                 </wa-button>
                 <AppTooltip v-if="canScrollDown || paneAlternate" for="terminal-scroll-bottom-button">Scroll to bottom</AppTooltip>
 
-                <!-- Mobile-only controls -->
-                <template v-if="settingsStore.isTouchDevice">
-                    <div class="touch-mode-group">
-                        <span
-                            class="touch-mode-label"
-                            @click="touchMode = touchMode === 'scroll' ? 'select' : 'scroll'"
-                        >Scroll</span>
-                        <wa-switch
-                            size="small"
-                            class="touch-mode-switch"
-                            :checked="touchMode === 'select'"
-                            @change="handleTouchModeChange"
-                        >Select</wa-switch>
-                    </div>
+                <!-- Mobile-only: scroll/select mode toggle -->
+                <div v-if="settingsStore.isTouchDevice" class="touch-mode-group">
+                    <span
+                        class="touch-mode-label"
+                        @click="touchMode = touchMode === 'scroll' ? 'select' : 'scroll'"
+                    >Scroll</span>
+                    <wa-switch
+                        size="small"
+                        class="touch-mode-switch"
+                        :checked="touchMode === 'select'"
+                        @change="handleTouchModeChange"
+                    >Select</wa-switch>
+                </div>
 
-                    <Transition name="copy-fade">
-                        <wa-button
-                            v-if="hasSelection"
-                            variant="primary"
-                            appearance="filled"
-                            size="small"
-                            class="copy-button"
-                            @click="copySelection"
-                        >
+                <!-- Copy button (all devices) -->
+                <Transition name="copy-fade">
+                    <wa-button
+                        v-if="hasSelection"
+                        variant="primary"
+                        appearance="filled"
+                        size="small"
+                        class="copy-button"
+                        @click="copySelection"
+                    >
                             <wa-icon slot="start" name="copy" variant="regular"></wa-icon>
                             Copy
                         </wa-button>
-                    </Transition>
-                </template>
+                </Transition>
 
                 <wa-button
                     id="terminal-disconnect-button"

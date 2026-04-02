@@ -1439,10 +1439,9 @@ export function useTerminal(sessionId) {
         // Track selection state for mobile copy button.
         // No auto-copy: on mobile the user copies via the explicit button,
         // on desktop the user copies via right-click or Ctrl+C.
+        // Track selection state for the copy button (all devices).
         terminal.onSelectionChange(() => {
-            if (settingsStore.isTouchDevice) {
-                hasSelection.value = !!terminal.getSelection()
-            }
+            hasSelection.value = !!terminal.getSelection() || !!tmuxScrollSel
         })
 
         // Forward user input to the WebSocket
