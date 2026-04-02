@@ -140,8 +140,10 @@ def _sync_session_items(session: Session, file_path: Path) -> list[int]:
     stat = file_path.stat()
     file_mtime = stat.st_mtime
 
-    # If mtime hasn't changed, nothing to do
-    if session.mtime == file_mtime:
+    # If mtime hasn't changed and file hasn't grown beyond last_offset, nothing to do.
+    # Check file size too: mtime has ~1s resolution, so two writes within the same second
+    # share the same mtime. Without the size check, the second write would be silently skipped.
+    if session.mtime == file_mtime and session.last_offset >= stat.st_size:
         return []
 
     with open(file_path, "r", encoding="utf-8") as f:
@@ -159,6 +161,8 @@ def _sync_session_items(session: Session, file_path: Path) -> list[int]:
         # Split into lines (filter out empty lines)
         lines = [line for line in new_content.split("\n") if line.strip()]
 
+        actually_new_count = 0
+
         if lines:
             # Create SessionItem objects for bulk insert (raw content only)
             current_line_num = session.last_line
@@ -175,7 +179,21 @@ def _sync_session_items(session: Session, file_path: Path) -> list[int]:
                     content=line,
                 ))
 
-            # Bulk create all items
+            # Check how many of these line_nums already exist in the DB.
+            # This can happen when the watcher already inserted items (during a previous run)
+            # but the session's tracking fields (last_line, last_offset, mtime) weren't saved
+            # before shutdown — leaving the session state stale while items exist in the DB.
+            # bulk_create(ignore_conflicts=True) silently skips duplicates, so we can't rely
+            # on items_to_create to know how many were actually inserted.
+            first_new_line = session.last_line + 1
+            pre_existing = SessionItem.objects.filter(
+                session=session,
+                line_num__gte=first_new_line,
+                line_num__lte=current_line_num,
+            ).count()
+            actually_new_count = len(items_to_create) - pre_existing
+
+            # Bulk create all items (silently skips items that already exist)
             SessionItem.objects.bulk_create(items_to_create, ignore_conflicts=True)
 
             # Update session tracking fields
@@ -186,7 +204,11 @@ def _sync_session_items(session: Session, file_path: Path) -> list[int]:
         session.mtime = file_mtime
         session.save(update_fields=["last_offset", "last_line", "mtime"])
 
-    return [item.line_num for item in items_to_create] if lines else []
+    # Return only truly new line_nums (the last actually_new_count items,
+    # since pre-existing items occupy the lower line_nums in the range)
+    if actually_new_count > 0:
+        return [item.line_num for item in items_to_create[-actually_new_count:]]
+    return []
 
 
 def _sync_session_subagents(
