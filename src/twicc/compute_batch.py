@@ -827,7 +827,14 @@ def apply_session_complete(msg: dict) -> None:
         for dt_field in ('created_at', 'last_started_at', 'last_updated_at', 'last_stopped_at'):
             if dt_field in session_fields and session_fields[dt_field] is not None:
                 session_fields[dt_field] = datetime.fromisoformat(session_fields[dt_field])
-        Session.objects.filter(id=session_id).update(**session_fields)
+        rows = Session.objects.filter(id=session_id).update(**session_fields)
+        if rows == 0:
+            logger.debug(f"apply_session_complete: session {session_id} not found for update (0 rows affected)")
+        else:
+            logger.debug(
+                f"apply_session_complete: session {session_id} updated"
+                f" (compute_version={session_fields.get('compute_version')})"
+            )
 
     # 6. Recalculate session costs from SessionItem data (idempotent, order-independent)
     session = Session.objects.get(id=session_id)
