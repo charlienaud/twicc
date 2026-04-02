@@ -1087,19 +1087,12 @@ export function useTerminal(sessionId) {
             return true
         })
 
-        // Copy selection to system clipboard automatically (desktop only).
-        // On mobile, selection tracking is handled via hasSelection ref + explicit copy button.
+        // Track selection state for mobile copy button.
+        // No auto-copy: on mobile the user copies via the explicit button,
+        // on desktop the user copies via right-click or Ctrl+C.
         terminal.onSelectionChange(() => {
-            const selection = terminal.getSelection()
-
-            if (!settingsStore.isTouchDevice) {
-                // Desktop: immediate auto-copy
-                if (selection) {
-                    navigator.clipboard.writeText(selection)
-                }
-            } else {
-                // Mobile: just track whether there is a selection (copy is manual via button)
-                hasSelection.value = !!selection
+            if (settingsStore.isTouchDevice) {
+                hasSelection.value = !!terminal.getSelection()
             }
         })
 
