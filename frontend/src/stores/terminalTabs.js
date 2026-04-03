@@ -13,11 +13,11 @@ export const useTerminalTabsStore = defineStore('terminalTabs', {
         },
         addIndex(sessionId, index) {
             if (!this.indices[sessionId]) {
-                this.indices[sessionId] = []
+                this.indices[sessionId] = [index]
+                return
             }
             if (!this.indices[sessionId].includes(index)) {
-                this.indices[sessionId].push(index)
-                this.indices[sessionId].sort((a, b) => a - b)
+                this.indices[sessionId] = [...this.indices[sessionId], index].sort((a, b) => a - b)
             }
         },
         removeIndex(sessionId, index) {
