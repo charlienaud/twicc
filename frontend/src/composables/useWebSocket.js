@@ -17,6 +17,7 @@ const WS_CLOSE_AUTH_FAILURE = 4001
 
 // localStorage key for tracking the last version the user was notified about
 const UPDATE_NOTIFIED_VERSION_KEY = 'twicc-update-notified-version'
+const CLAUDE_STATUS_KEY = 'twicc-claude-status'
 
 // Module-level state, preserved across HMR reloads via import.meta.hot.
 // Without this, Vite HMR resets these variables to their initial values,
@@ -395,20 +396,32 @@ const CLAUDE_STATUS_MESSAGES = {
  * Handle claude_status message from the backend.
  * Shows a persistent toast when Claude Code is not operational,
  * or a resolution toast when it returns to operational.
+ * Deduplication is done via localStorage: the toast is only shown if the status
+ * has changed since the last time it was displayed, so page refreshes during
+ * an ongoing outage don't re-trigger the notification.
  */
 function handleClaudeStatus(msg) {
     const { status } = msg
     if (!status) return
 
+    // Skip if the status hasn't changed since the last notification
+    const lastStatus = localStorage.getItem(CLAUDE_STATUS_KEY)
+    if (status === lastStatus) return
+    localStorage.setItem(CLAUDE_STATUS_KEY, status)
+
     const statusLink = '<a href="https://status.claude.com/" target="_blank" rel="noopener" style="color: inherit; text-decoration: underline;">status.claude.com</a>'
 
     if (status === 'operational') {
-        toast.custom({
-            type: 'success',
-            title: 'Anthropic status update',
-            html: `Claude Code issues on Anthropic's side are now resolved — ${statusLink}`,
-            duration: Infinity,
-        })
+        // Only show the "resolved" toast if there was a previous non-operational status.
+        // On first load (no localStorage entry) or if already operational, skip it.
+        if (lastStatus && lastStatus !== 'operational') {
+            toast.custom({
+                type: 'success',
+                title: 'Anthropic status update',
+                html: `Claude Code issues on Anthropic's side are now resolved — ${statusLink}`,
+                duration: Infinity,
+            })
+        }
     } else {
         const config = CLAUDE_STATUS_MESSAGES[status]
         if (config) {
