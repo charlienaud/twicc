@@ -687,7 +687,11 @@ export function useWebSocket() {
                 break
             case 'terminal_list':
                 import('../stores/terminalTabs').then(({ useTerminalTabsStore }) => {
-                    useTerminalTabsStore().setIndices(msg.session_id, msg.terminals)
+                    const store = useTerminalTabsStore()
+                    store.setIndices(msg.session_id, msg.terminals)
+                    if (msg.labels) {
+                        store.setLabels(msg.session_id, msg.labels)
+                    }
                 })
                 break
             case 'terminal_created':
@@ -698,6 +702,11 @@ export function useWebSocket() {
             case 'terminal_killed':
                 import('../stores/terminalTabs').then(({ useTerminalTabsStore }) => {
                     useTerminalTabsStore().removeIndex(msg.session_id, msg.terminal_index)
+                })
+                break
+            case 'terminal_renamed':
+                import('../stores/terminalTabs').then(({ useTerminalTabsStore }) => {
+                    useTerminalTabsStore().setLabel(msg.session_id, msg.terminal_index, msg.label)
                 })
                 break
             case 'startup_progress':

@@ -33,6 +33,7 @@ import signal
 import struct
 import subprocess
 import termios
+from typing import NamedTuple
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
@@ -55,6 +56,18 @@ READ_BUFFER_SIZE = 20480
 
 # tmux socket name — isolates twicc sessions from user's own tmux
 TMUX_SOCKET_NAME = "twicc"
+
+# Maximum length for terminal tab labels (stored in tmux user options)
+TERMINAL_LABEL_MAX_LENGTH = 30
+
+# tmux user option name for storing terminal labels
+_TMUX_LABEL_OPTION = "@twicc_label"
+
+
+class TerminalInfo(NamedTuple):
+    """A terminal's index and optional display label from tmux."""
+    index: int
+    label: str  # empty string if no custom label set
 
 
 @sync_to_async
@@ -289,11 +302,14 @@ def tmux_session_exists(session_id: str, terminal_index: int = 0) -> bool:
         return False
 
 
-def list_tmux_sessions_for_session(session_id: str) -> list[int]:
-    """List all terminal indices that have active tmux sessions for a given twicc session.
+def list_tmux_sessions_for_session(session_id: str) -> list[TerminalInfo]:
+    """List all terminal indices (with labels) that have active tmux sessions for a given twicc session.
 
     Queries the twicc tmux socket and filters by session name prefix.
-    Returns a sorted list of terminal indices (e.g., [0, 3, 7]).
+    Uses a single tmux call with ``#{session_name}`` and ``#{@twicc_label}``
+    in the format string to retrieve both name and label at once.
+
+    Returns a sorted list of TerminalInfo (by index).
     Returns an empty list if tmux is not installed or no sessions exist.
     """
     tmux_path = get_tmux_path()
@@ -302,7 +318,8 @@ def list_tmux_sessions_for_session(session_id: str) -> list[int]:
 
     try:
         result = subprocess.run(
-            [tmux_path, "-L", TMUX_SOCKET_NAME, "list-sessions", "-F", "#{session_name}"],
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "list-sessions",
+             "-F", "#{session_name}\t#{@twicc_label}"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -313,19 +330,20 @@ def list_tmux_sessions_for_session(session_id: str) -> list[int]:
         return []
 
     prefix = tmux_session_name(session_id, 0)  # "twicc-<normalized_id>"
-    indices = []
-    for name in result.stdout.strip().split("\n"):
-        if not name:
+    terminals: list[TerminalInfo] = []
+    for line in result.stdout.strip().split("\n"):
+        if not line:
             continue
+        name, _, label = line.partition("\t")
         if name == prefix:
-            indices.append(0)
+            terminals.append(TerminalInfo(index=0, label=label))
         elif name.startswith(prefix + "__"):
             suffix = name[len(prefix) + 2:]
             try:
-                indices.append(int(suffix))
+                terminals.append(TerminalInfo(index=int(suffix), label=label))
             except ValueError:
                 continue
-    return sorted(indices)
+    return sorted(terminals, key=lambda t: t.index)
 
 
 def kill_tmux_session(session_id: str, terminal_index: int = 0) -> bool:
@@ -357,10 +375,10 @@ def kill_all_tmux_sessions(session_id: str) -> int:
 
     Returns the number of sessions killed.
     """
-    indices = list_tmux_sessions_for_session(session_id)
+    terminals = list_tmux_sessions_for_session(session_id)
     killed = 0
-    for index in indices:
-        if kill_tmux_session(session_id, index):
+    for terminal in terminals:
+        if kill_tmux_session(session_id, terminal.index):
             killed += 1
     return killed
 
@@ -378,6 +396,43 @@ def tmux_set_option(session_id: str, option: str, value: str, terminal_index: in
     try:
         result = subprocess.run(
             [tmux_path, "-L", TMUX_SOCKET_NAME, "set-option", "-t", name, option, value],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def set_tmux_terminal_label(session_id: str, terminal_index: int, label: str) -> bool:
+    """Set a display label on a tmux terminal session using a user option.
+
+    The label is stored as a tmux user option (``@twicc_label``) on the session,
+    which can be read back via ``list_tmux_sessions_for_session`` (in the format
+    string) or ``get_tmux_terminal_label``.
+
+    The label is truncated to ``TERMINAL_LABEL_MAX_LENGTH`` characters.
+    An empty label removes the option.
+
+    Returns True on success, False on failure (tmux not installed, session
+    doesn't exist, etc.).
+    """
+    label = label[:TERMINAL_LABEL_MAX_LENGTH].strip()
+    if not label:
+        # Remove the option entirely when label is empty
+        return _unset_tmux_terminal_label(session_id, terminal_index)
+    return tmux_set_option(session_id, _TMUX_LABEL_OPTION, label, terminal_index)
+
+
+def _unset_tmux_terminal_label(session_id: str, terminal_index: int) -> bool:
+    """Remove the label user option from a tmux terminal session."""
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return False
+
+    name = tmux_session_name(session_id, terminal_index)
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "set-option", "-u", "-t", name, _TMUX_LABEL_OPTION],
             capture_output=True, timeout=5,
         )
         return result.returncode == 0

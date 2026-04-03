@@ -600,6 +600,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         elif msg_type == "kill_terminal":
             await self._handle_kill_terminal(content)
 
+        elif msg_type == "rename_terminal":
+            await self._handle_rename_terminal(content)
+
     async def send_json(self, content, close=False):
         try:
             await super().send_json(content, close=close)
@@ -1144,7 +1147,7 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             )
 
     async def _handle_list_terminals(self, data):
-        """Handle list_terminals request: return active tmux terminal indices for a session."""
+        """Handle list_terminals request: return active tmux terminal indices (with labels) for a session."""
         session_id = data.get("session_id")
         if not session_id:
             await self.send_json({"type": "error", "message": "Missing session_id"})
@@ -1152,12 +1155,13 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         from twicc.terminal import list_tmux_sessions_for_session
 
-        indices = await asyncio.to_thread(list_tmux_sessions_for_session, session_id)
+        terminals = await asyncio.to_thread(list_tmux_sessions_for_session, session_id)
 
         await self.send_json({
             "type": "terminal_list",
             "session_id": session_id,
-            "terminals": indices,
+            "terminals": [t.index for t in terminals],
+            "labels": {str(t.index): t.label for t in terminals if t.label},
         })
 
     async def _handle_kill_terminal(self, data):
@@ -1186,6 +1190,41 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
                     "type": "terminal_killed",
                     "session_id": session_id,
                     "terminal_index": terminal_index,
+                },
+            },
+        )
+
+    async def _handle_rename_terminal(self, data):
+        """Handle rename_terminal request: set a display label on a terminal's tmux session.
+
+        For tmux terminals, the label is stored as a tmux user option and
+        persists across reconnections. The rename is broadcast to all clients
+        for cross-device sync.
+        """
+        session_id = data.get("session_id")
+        terminal_index = data.get("terminal_index")
+        label = data.get("label", "")
+        if not session_id or terminal_index is None:
+            await self.send_json({"type": "error", "message": "Missing session_id or terminal_index"})
+            return
+
+        from twicc.terminal import TERMINAL_LABEL_MAX_LENGTH, set_tmux_terminal_label
+
+        # Sanitize: trim and truncate
+        label = label.strip()[:TERMINAL_LABEL_MAX_LENGTH]
+
+        await asyncio.to_thread(set_tmux_terminal_label, session_id, terminal_index, label)
+
+        # Broadcast to all clients (including the sender, for confirmation)
+        await self.channel_layer.group_send(
+            "updates",
+            {
+                "type": "broadcast",
+                "data": {
+                    "type": "terminal_renamed",
+                    "session_id": session_id,
+                    "terminal_index": terminal_index,
+                    "label": label,
                 },
             },
         )

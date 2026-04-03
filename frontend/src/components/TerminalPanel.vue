@@ -9,6 +9,7 @@ import { toast } from '../composables/useToast'
 import { getUnavailablePlaceholders } from '../utils/snippetPlaceholders'
 import AppTooltip from './AppTooltip.vue'
 import TerminalInstance from './TerminalInstance.vue'
+import TerminalRenameDialog from './TerminalRenameDialog.vue'
 import ExtraKeysBar from './ExtraKeysBar.vue'
 import ManageCombosDialog from './ManageCombosDialog.vue'
 import ManageSnippetsDialog from './ManageSnippetsDialog.vue'
@@ -56,9 +57,18 @@ const snippetsForProject = computed(() => {
     })
 })
 
+// Whether this session uses tmux (determines if rename is persisted to backend)
+const usesTmux = computed(() => {
+    if (!settingsStore.isTerminalUseTmux) return false
+    const s = session.value
+    if (s?.draft || s?.archived) return false
+    return true
+})
+
 // Dialog refs
 const manageCombosDialogRef = ref(null)
 const manageSnippetsDialogRef = ref(null)
+const renameDialogRef = ref(null)
 
 // Terminal instance registration (provide/inject for toolbar + ExtraKeysBar routing)
 const terminalApis = reactive(new Map())
@@ -126,6 +136,44 @@ function onTerminalTabShow(event) {
     const panelName = event.detail?.name
     if (panelName?.startsWith('term-')) {
         activeIndex.value = parseInt(panelName.slice(5), 10)
+    }
+}
+
+// --- Terminal tab rename ---
+
+/** Default label for a terminal index (used when no custom label is set). */
+function defaultLabel(index) {
+    return index === 0 ? 'Main' : `Term ${index + 1}`
+}
+
+/** Open the rename dialog for a terminal tab. */
+function openRenameDialog(index) {
+    const term = terminals.value.find(t => t.index === index)
+    if (!term) return
+    renameDialogRef.value?.open(index, term.label, defaultLabel(index))
+}
+
+/** Handle double-click on a tab: open rename dialog for that tab. */
+function onTabDblClick(index) {
+    openRenameDialog(index)
+}
+
+/** Handle save from the rename dialog. */
+function handleRename(index, label) {
+    const term = terminals.value.find(t => t.index === index)
+    if (!term) return
+
+    // Update local label immediately (optimistic)
+    term.label = label || defaultLabel(index)
+
+    // For tmux sessions, persist to backend
+    if (usesTmux.value) {
+        sendWsMessage({
+            type: 'rename_terminal',
+            session_id: props.sessionId,
+            terminal_index: index,
+            label,
+        })
     }
 }
 
@@ -205,7 +253,9 @@ function syncTerminalsFromBackend(backendIndices, oldIndices) {
     // Add tabs for backend terminals not present locally
     for (const index of backendIndices) {
         if (!localIndices.has(index)) {
-            const label = index === 0 ? 'Main' : `Term ${index + 1}`
+            // Use label from store if available, otherwise default
+            const storeLabel = terminalTabsStore.getLabel(props.sessionId, index)
+            const label = storeLabel || defaultLabel(index)
             terminals.value.push({ index, label })
         }
     }
@@ -236,6 +286,24 @@ function syncTerminalsFromBackend(backendIndices, oldIndices) {
         nextIndex.value = maxIndex + 1
     }
 }
+
+// Watch store labels for cross-device sync (another client renamed a terminal)
+watch(
+    () => terminalTabsStore.labels[props.sessionId],
+    (storeLabels) => {
+        if (!storeLabels) return
+        for (const term of terminals.value) {
+            const storeLabel = storeLabels[term.index]
+            if (storeLabel) {
+                term.label = storeLabel
+            } else if (!storeLabel && terminalTabsStore.indices[props.sessionId]?.includes(term.index)) {
+                // Label was cleared in the store for a known backend terminal → reset to default
+                term.label = defaultLabel(term.index)
+            }
+        }
+    },
+    { deep: true },
+)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Keyboard shortcuts: terminal tab navigation (Alt+Ctrl+Shift+{1-9, ←/→, ↑})
@@ -309,6 +377,7 @@ onBeforeUnmount(() => {
                     :key="term.index"
                     slot="nav"
                     :panel="`term-${term.index}`"
+                    @dblclick="onTabDblClick(term.index)"
                 >
                     {{ term.label }}
                 </wa-tab>
@@ -325,96 +394,116 @@ onBeforeUnmount(() => {
                 </wa-button>
             </wa-tab-group>
 
-            <!-- Right: terminal-specific actions (driven by activeApi) -->
-            <div v-if="tb.isConnected" class="terminal-actions">
-                <!-- Scroll to edge buttons -->
-                <wa-button
-                    v-if="tb.canScrollUp || tb.paneAlternate"
-                    id="terminal-scroll-top-button"
-                    variant="neutral"
-                    appearance="plain"
-                    size="small"
-                    class="scroll-edge-button"
-                    :loading="tb.scrollingToEdge"
-                    @click="handleScrollToEdge('top')"
-                >
-                    <wa-icon name="angles-up"></wa-icon>
-                </wa-button>
-                <AppTooltip
-                    v-if="tb.canScrollUp || tb.paneAlternate"
-                    for="terminal-scroll-top-button"
-                >Scroll to top</AppTooltip>
-
-                <wa-button
-                    v-if="tb.canScrollDown || tb.paneAlternate"
-                    id="terminal-scroll-bottom-button"
-                    variant="neutral"
-                    appearance="plain"
-                    size="small"
-                    class="scroll-edge-button"
-                    :loading="tb.scrollingToEdge"
-                    @click="handleScrollToEdge('bottom')"
-                >
-                    <wa-icon name="angles-down"></wa-icon>
-                </wa-button>
-                <AppTooltip
-                    v-if="tb.canScrollDown || tb.paneAlternate"
-                    for="terminal-scroll-bottom-button"
-                >Scroll to bottom</AppTooltip>
-
-                <!-- Mobile-only: scroll/select mode toggle -->
-                <div v-if="settingsStore.isTouchDevice" class="touch-mode-group">
-                    <span
-                        class="touch-mode-label"
-                        @click="handleTouchModeToggle"
-                    >Scroll</span>
-                    <wa-switch
+            <!-- Right: rename button (always visible) + terminal-specific actions (when connected) -->
+            <div class="terminal-actions">
+                <template v-if="tb.isConnected">
+                    <!-- Scroll to edge buttons -->
+                    <wa-button
+                        v-if="tb.canScrollUp || tb.paneAlternate"
+                        id="terminal-scroll-top-button"
+                        variant="neutral"
+                        appearance="plain"
                         size="small"
-                        class="touch-mode-switch"
-                        :checked="tb.touchMode === 'select'"
-                        @change="handleTouchModeChange"
-                    >Select</wa-switch>
-                </div>
+                        class="scroll-edge-button"
+                        :loading="tb.scrollingToEdge"
+                        @click="handleScrollToEdge('top')"
+                    >
+                        <wa-icon name="angles-up"></wa-icon>
+                    </wa-button>
+                    <AppTooltip
+                        v-if="tb.canScrollUp || tb.paneAlternate"
+                        for="terminal-scroll-top-button"
+                    >Scroll to top</AppTooltip>
 
-                <!-- Copy button (all devices) -->
+                    <wa-button
+                        v-if="tb.canScrollDown || tb.paneAlternate"
+                        id="terminal-scroll-bottom-button"
+                        variant="neutral"
+                        appearance="plain"
+                        size="small"
+                        class="scroll-edge-button"
+                        :loading="tb.scrollingToEdge"
+                        @click="handleScrollToEdge('bottom')"
+                    >
+                        <wa-icon name="angles-down"></wa-icon>
+                    </wa-button>
+                    <AppTooltip
+                        v-if="tb.canScrollDown || tb.paneAlternate"
+                        for="terminal-scroll-bottom-button"
+                    >Scroll to bottom</AppTooltip>
+
+                    <!-- Mobile-only: scroll/select mode toggle -->
+                    <div v-if="settingsStore.isTouchDevice" class="touch-mode-group">
+                        <span
+                            class="touch-mode-label"
+                            @click="handleTouchModeToggle"
+                        >Scroll</span>
+                        <wa-switch
+                            size="small"
+                            class="touch-mode-switch"
+                            :checked="tb.touchMode === 'select'"
+                            @change="handleTouchModeChange"
+                        >Select</wa-switch>
+                    </div>
+
+                    <!-- Copy button (all devices) -->
+                    <wa-button
+                        v-if="tb.hasSelection"
+                        id="terminal-copy-button"
+                        variant="neutral"
+                        appearance="filled"
+                        size="small"
+                        class="copy-button"
+                        @click="handleCopy"
+                    >
+                        <wa-icon name="copy" variant="regular"></wa-icon>
+                    </wa-button>
+                    <AppTooltip v-if="tb.hasSelection" for="terminal-copy-button">Copy selection</AppTooltip>
+
+                    <!-- Paste button -->
+                    <wa-button
+                        id="terminal-paste-button"
+                        variant="neutral"
+                        appearance="filled"
+                        size="small"
+                        class="paste-button"
+                        @click="handlePaste"
+                    >
+                        <wa-icon name="paste" variant="regular"></wa-icon>
+                    </wa-button>
+                    <AppTooltip for="terminal-paste-button">Paste from clipboard</AppTooltip>
+                </template>
+
+                <wa-divider v-if="tb.isConnected" orientation="vertical"></wa-divider>
+
+                <!-- Rename button — always available -->
                 <wa-button
-                    v-if="tb.hasSelection"
-                    id="terminal-copy-button"
+                    id="terminal-rename-button"
                     variant="neutral"
                     appearance="filled"
                     size="small"
-                    class="copy-button"
-                    @click="handleCopy"
+                    class="rename-button"
+                    @click="openRenameDialog(activeIndex)"
                 >
-                    <wa-icon name="copy" variant="regular"></wa-icon>
+                    <wa-icon name="pen-to-square" variant="regular"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="tb.hasSelection" for="terminal-copy-button">Copy selection</AppTooltip>
+                <AppTooltip for="terminal-rename-button">Rename tab</AppTooltip>
 
-                <!-- Paste button -->
-                <wa-button
-                    id="terminal-paste-button"
-                    variant="neutral"
-                    appearance="filled"
-                    size="small"
-                    class="paste-button"
-                    @click="handlePaste"
-                >
-                    <wa-icon name="paste" variant="regular"></wa-icon>
-                </wa-button>
-                <AppTooltip for="terminal-paste-button">Paste from clipboard</AppTooltip>
+                <template v-if="tb.isConnected">
 
-                <!-- Disconnect / Kill button -->
-                <wa-button
-                    id="terminal-disconnect-button"
-                    variant="danger"
-                    appearance="filled"
-                    size="small"
-                    class="disconnect-button"
-                    @click="handleDisconnect"
-                >
-                    <wa-icon name="ban" :label="isActiveMain ? 'Disconnect' : 'Kill terminal'"></wa-icon>
-                </wa-button>
-                <AppTooltip for="terminal-disconnect-button">{{ isActiveMain ? 'Disconnect' : 'Kill terminal' }}</AppTooltip>
+                    <!-- Disconnect / Kill button -->
+                    <wa-button
+                        id="terminal-disconnect-button"
+                        variant="danger"
+                        appearance="filled"
+                        size="small"
+                        class="disconnect-button"
+                        @click="handleDisconnect"
+                    >
+                        <wa-icon name="ban" :label="isActiveMain ? 'Disconnect' : 'Kill terminal'"></wa-icon>
+                    </wa-button>
+                    <AppTooltip for="terminal-disconnect-button">{{ isActiveMain ? 'Disconnect' : 'Kill terminal' }}</AppTooltip>
+                </template>
             </div>
         </div>
 
@@ -456,6 +545,10 @@ onBeforeUnmount(() => {
         <ManageSnippetsDialog
             ref="manageSnippetsDialogRef"
             :current-project-id="projectId"
+        />
+        <TerminalRenameDialog
+            ref="renameDialogRef"
+            @save="handleRename"
         />
     </div>
 </template>
@@ -524,6 +617,9 @@ onBeforeUnmount(() => {
     align-items: center;
     gap: var(--wa-space-m);
     flex-shrink: 0;
+    wa-divider {
+        --spacing: 0px;
+    }
 }
 
 .scroll-edge-button {
@@ -567,11 +663,13 @@ onBeforeUnmount(() => {
     user-select: none;
 }
 
+.rename-button,
 .copy-button,
 .paste-button {
     flex-shrink: 0;
 }
 
+.rename-button::part(base),
 .copy-button::part(base),
 .paste-button::part(base) {
     --wa-form-control-padding-block: .5em;
