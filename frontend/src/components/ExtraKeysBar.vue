@@ -16,7 +16,7 @@ const props = defineProps({
 const emit = defineEmits([
     'key-input', 'modifier-toggle', 'paste',
     'combo-press', 'snippet-press', 'snippet-disabled-press',
-    'snippet-send-to',
+    'snippet-send-to', 'snippet-edit-send',
     'manage-combos', 'manage-snippets',
 ])
 
@@ -147,6 +147,10 @@ function handleSnippetPointerDown(event, snippet) {
 function handleSnippetSendTo(event, snippet) {
     const value = event.detail?.item?.value
     if (!value) return
+    if (value === 'edit') {
+        emit('snippet-edit-send', snippet)
+        return
+    }
     emit('snippet-send-to', snippet, value)
 }
 
@@ -245,28 +249,36 @@ function keyClasses(keyDef) {
                                 <wa-icon v-if="snippet.openInNewTab" name="arrow-up-right-from-square" class="snippet-new-tab-icon"></wa-icon>
                             </button>
                             <wa-dropdown
-                                v-if="!snippet._disabled"
                                 placement="top-start"
                                 @wa-select="(e) => handleSnippetSendTo(e, snippet)"
                             >
                                 <button
                                     slot="trigger"
                                     class="extra-key snippet-arrow"
+                                    :class="{ 'snippet-disabled': snippet._disabled }"
                                     @pointerdown.prevent
                                 >
                                     <wa-icon name="chevron-up"></wa-icon>
                                 </button>
-                                <wa-dropdown-item
-                                    v-for="term in terminals"
-                                    :key="term.index"
-                                    :value="String(term.index)"
-                                >
-                                    {{ term.label }}<template v-if="term.index === activeTerminalIndex"> (current)</template>
-                                </wa-dropdown-item>
-                                <wa-divider></wa-divider>
-                                <wa-dropdown-item value="new">
-                                    <wa-icon slot="prefix" name="plus"></wa-icon>
-                                    New tab
+                                <template v-if="!snippet._disabled">
+                                    <wa-dropdown-item disabled class="dropdown-label">Send to tab</wa-dropdown-item>
+                                    <wa-dropdown-item
+                                        v-for="term in terminals"
+                                        :key="term.index"
+                                        :value="String(term.index)"
+                                    >
+                                        {{ term.label }}<template v-if="term.index === activeTerminalIndex"> (current)</template>
+                                    </wa-dropdown-item>
+                                    <wa-divider></wa-divider>
+                                    <wa-dropdown-item value="new">
+                                        <wa-icon slot="prefix" name="plus"></wa-icon>
+                                        New tab
+                                    </wa-dropdown-item>
+                                    <wa-divider></wa-divider>
+                                </template>
+                                <wa-dropdown-item value="edit">
+                                    <wa-icon slot="prefix" name="pen-to-square"></wa-icon>
+                                    Edit before sending
                                 </wa-dropdown-item>
                             </wa-dropdown>
                         </div>
@@ -454,26 +466,31 @@ button {
     font-size: 0.85em;
 }
 
-/* When there's no arrow (disabled snippet), keep normal border-radius */
-.snippet-group .snippet-main:last-child {
-    border-top-right-radius: var(--wa-border-radius-s);
-    border-bottom-right-radius: var(--wa-border-radius-s);
-}
-
 /* ── Disabled snippets ────────────────────────────────────────────── */
-.extra-key.snippet-disabled {
+/* Main button: fully dimmed + not-allowed */
+.extra-key.snippet-main.snippet-disabled {
     opacity: 0.35;
     cursor: not-allowed;
 }
 
-.extra-key.snippet-disabled:hover {
+.extra-key.snippet-main.snippet-disabled:hover {
     background: var(--wa-color-surface-raised);
     transform: none;
 }
 
-.extra-key.snippet-disabled:active {
+.extra-key.snippet-main.snippet-disabled:active {
     transform: none;
 }
+
+/* Arrow button: dimmed but still interactive (opens edit-before-send) */
+.extra-key.snippet-arrow.snippet-disabled {
+    opacity: 0.35;
+}
+
+.extra-key.snippet-arrow.snippet-disabled:hover {
+    opacity: 0.7;
+}
+
 
 /* ── Empty tab text ───────────────────────────────────────────────── */
 .empty-tab-text {

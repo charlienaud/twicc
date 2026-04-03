@@ -13,6 +13,7 @@ import TerminalRenameDialog from './TerminalRenameDialog.vue'
 import ExtraKeysBar from './ExtraKeysBar.vue'
 import ManageCombosDialog from './ManageCombosDialog.vue'
 import ManageSnippetsDialog from './ManageSnippetsDialog.vue'
+import SnippetSendDialog from './SnippetSendDialog.vue'
 
 const props = defineProps({
     sessionId: {
@@ -34,15 +35,20 @@ const terminalTabsStore = useTerminalTabsStore()
 const session = computed(() => props.sessionId ? dataStore.getSession(props.sessionId) : null)
 const projectId = computed(() => session.value?.project_id)
 
-// Snippets for the current project (global + project-specific, merged),
-// enriched with placeholder availability info (_disabled / _disabledReason).
-const snippetsForProject = computed(() => {
-    const raw = projectId.value ? terminalConfigStore.getSnippetsForProject(projectId.value) : []
+// Placeholder resolution context (shared between snippet enrichment and send dialog).
+const placeholderContext = computed(() => {
     const s = session.value
     const pid = projectId.value
     const project = pid ? dataStore.getProject(pid) : null
     const projectName = pid ? dataStore.getProjectDisplayName(pid) : null
-    const ctx = { session: s, project, projectName }
+    return { session: s, project, projectName }
+})
+
+// Snippets for the current project (global + project-specific, merged),
+// enriched with placeholder availability info (_disabled / _disabledReason).
+const snippetsForProject = computed(() => {
+    const raw = projectId.value ? terminalConfigStore.getSnippetsForProject(projectId.value) : []
+    const ctx = placeholderContext.value
 
     return raw.map(snippet => {
         const placeholders = snippet.placeholders || []
@@ -68,6 +74,7 @@ const usesTmux = computed(() => {
 // Dialog refs
 const manageCombosDialogRef = ref(null)
 const manageSnippetsDialogRef = ref(null)
+const snippetSendDialogRef = ref(null)
 const renameDialogRef = ref(null)
 
 // Terminal instance registration (provide/inject for toolbar + ExtraKeysBar routing)
@@ -205,6 +212,16 @@ function sendSnippetToApi(api, snippet) {
         },
     )
     setTimeout(() => stopWatch(), 10000)
+}
+
+// --- Edit-before-send dialog ---
+
+function handleSnippetEditSend(snippet) {
+    snippetSendDialogRef.value?.open(snippet)
+}
+
+function handleSnippetSendDialogSend(editedSnippet, target) {
+    handleSnippetSendTo(editedSnippet, target)
 }
 
 // --- Snippet dispatch (main button click) ---
@@ -627,6 +644,7 @@ onBeforeUnmount(() => {
             @combo-press="(...args) => activeApi?.handleComboPress?.(...args)"
             @snippet-press="handleSnippetPress"
             @snippet-send-to="handleSnippetSendTo"
+            @snippet-edit-send="handleSnippetEditSend"
             @snippet-disabled-press="(snippet) => toast.warning(snippet._disabledReason)"
             @manage-combos="manageCombosDialogRef?.open()"
             @manage-snippets="manageSnippetsDialogRef?.open()"
@@ -636,6 +654,13 @@ onBeforeUnmount(() => {
         <ManageSnippetsDialog
             ref="manageSnippetsDialogRef"
             :current-project-id="projectId"
+        />
+        <SnippetSendDialog
+            ref="snippetSendDialogRef"
+            :terminals="terminals"
+            :active-terminal-index="activeIndex"
+            :placeholder-context="placeholderContext"
+            @send="handleSnippetSendDialogSend"
         />
         <TerminalRenameDialog
             ref="renameDialogRef"

@@ -4,8 +4,9 @@ import { ref, computed, nextTick, useId } from 'vue'
 import { useTerminalConfigStore } from '../stores/terminalConfig'
 import { useDataStore } from '../stores/data'
 import ProjectBadge from './ProjectBadge.vue'
+import SnippetTextEditor from './SnippetTextEditor.vue'
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree'
-import { PLACEHOLDERS, extractPlaceholders } from '../utils/snippetPlaceholders'
+import { extractPlaceholders } from '../utils/snippetPlaceholders'
 
 const props = defineProps({
     currentProjectId: {
@@ -17,14 +18,10 @@ const props = defineProps({
 const terminalConfigStore = useTerminalConfigStore()
 const dataStore = useDataStore()
 
-// ── Special characters (tedious to type on mobile) ──────────────────
-const SPECIAL_CHARS = ['-', '/', '|', '~', '\\', '_', '*', '&', '.', '+', '↵']
-
 // ── Dialog refs ──────────────────────────────────────────────────────
 const dialogRef = ref(null)
 const saveButtonRef = ref(null)
 const labelInputRef = ref(null)
-const textareaRef = ref(null)
 
 const instanceId = useId()
 const formId = `manage-snippets-form-${instanceId}`
@@ -136,42 +133,6 @@ function cancelForm() {
 /** Extract project ID from a scope string like "project:xxx" */
 function projectIdFromScope(scope) {
     return scope.startsWith('project:') ? scope.slice('project:'.length) : null
-}
-
-// ── Special char insertion ───────────────────────────────────────────
-function insertChar(char) {
-    const insertValue = char === '↵' ? '\n' : char
-    const textarea = textareaRef.value?.shadowRoot?.querySelector('textarea')
-    // Insert at cursor position (or replace selection), fallback to append
-    const start = textarea?.selectionStart ?? formData.value.snippet.length
-    const end = textarea?.selectionEnd ?? formData.value.snippet.length
-    const current = formData.value.snippet
-    formData.value.snippet = current.slice(0, start) + insertValue + current.slice(end)
-    // Refocus the textarea with cursor right after the inserted char
-    const newPos = start + insertValue.length
-    nextTick(() => {
-        if (textarea) {
-            textarea.focus()
-            textarea.setSelectionRange(newPos, newPos)
-        }
-    })
-}
-
-// ── Placeholder insertion ────────────────────────────────────────────
-function insertPlaceholder(id) {
-    const insertValue = `{${id}}`
-    const textarea = textareaRef.value?.shadowRoot?.querySelector('textarea')
-    const start = textarea?.selectionStart ?? formData.value.snippet.length
-    const end = textarea?.selectionEnd ?? formData.value.snippet.length
-    const current = formData.value.snippet
-    formData.value.snippet = current.slice(0, start) + insertValue + current.slice(end)
-    const newPos = start + insertValue.length
-    nextTick(() => {
-        if (textarea) {
-            textarea.focus()
-            textarea.setSelectionRange(newPos, newPos)
-        }
-    })
 }
 
 // ── Validation & save ────────────────────────────────────────────────
@@ -371,64 +332,13 @@ defineExpose({ open, close })
                 />
             </div>
 
-            <!-- Snippet text -->
-            <div class="form-group">
-                <label class="form-label">Snippet</label>
-                <wa-textarea
-                    ref="textareaRef"
-                    :value="formData.snippet"
-                    @input="formData.snippet = $event.target.value"
-                    rows="3"
-                    placeholder='e.g. "git status --short"'
-                    size="small"
-                    class="snippet-textarea"
-                />
-                <!-- Special character picker (for mobile convenience) -->
-                <div class="char-picker-row">
-                    <button
-                        v-for="char in SPECIAL_CHARS"
-                        :key="char"
-                        type="button"
-                        class="picker-key"
-                        @click="insertChar(char)"
-                    >{{ char }}</button>
-                </div>
-
-                <!-- Placeholder picker -->
-                <p class="placeholder-hint">Insert placeholders to be resolved at send time:</p>
-                <div class="placeholder-picker-row">
-                    <button
-                        v-for="p in PLACEHOLDERS"
-                        :key="p.id"
-                        type="button"
-                        class="picker-key placeholder-key"
-                        @click="insertPlaceholder(p.id)"
-                        :title="`Insert {${p.id}}`"
-                    >{{ p.label }}</button>
-                </div>
-            </div>
-
-            <!-- Options checkboxes + Scope dropdown on same row -->
-            <div class="form-options-row">
-                <!-- Append Enter -->
-                <wa-checkbox
-                    :checked="formData.appendEnter"
-                    @change="formData.appendEnter = $event.target.checked"
-                    size="small"
-                >
-                    Append final Enter
-                </wa-checkbox>
-
-                <!-- Open in new tab -->
-                <wa-checkbox
-                    :checked="formData.openInNewTab"
-                    @change="formData.openInNewTab = $event.target.checked"
-                    size="small"
-                >
-                    Open in new tab
-                </wa-checkbox>
-
-                <!-- Scope select -->
+            <!-- Snippet text + options (shared editor component) -->
+            <SnippetTextEditor
+                v-model:text="formData.snippet"
+                v-model:append-enter="formData.appendEnter"
+                v-model:open-in-new-tab="formData.openInNewTab"
+            >
+                <!-- Scope select (extra option in the shared options row) -->
                 <wa-select
                     :value="formData.scope"
                     @change="formData.scope = $event.target.value"
@@ -477,7 +387,7 @@ defineExpose({ open, close })
                         </wa-option>
                     </template>
                 </wa-select>
-            </div>
+            </SnippetTextEditor>
 
             <!-- Warning (duplicate label) -->
             <wa-callout v-if="warningMessage" variant="warning" size="small">
@@ -662,7 +572,7 @@ defineExpose({ open, close })
     color: var(--wa-color-danger-text);
 }
 
-/* ── Form ─────────────────────────────────────────────────────────── */
+/* ── Form (label field — snippet text/options are in SnippetTextEditor) ── */
 .form-group {
     display: flex;
     flex-direction: column;
@@ -674,79 +584,7 @@ defineExpose({ open, close })
     font-weight: var(--wa-font-weight-semibold);
 }
 
-.snippet-textarea::part(textarea) {
-    font-family: var(--wa-font-family-code);
-}
-
-/* ── Special char picker (same style as combo editor's picker-key) ─── */
-.char-picker-row {
-    display: flex;
-    gap: var(--wa-space-2xs);
-    flex-wrap: wrap;
-}
-
-.picker-key {
-    background: var(--wa-color-surface-raised);
-    border: 1px solid var(--wa-color-surface-border);
-    color: var(--wa-color-text-normal);
-    font-family: var(--wa-font-family-code);
-    font-size: var(--wa-font-size-s);
-    height: 1.75rem;
-    min-width: 2rem;
-    padding: 0 var(--wa-space-2xs);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--wa-border-radius-s);
-    cursor: pointer;
-    transition: background-color 0.1s, border-color 0.1s;
-    user-select: none;
-    font-weight: normal;
-    box-shadow: none;
-    margin: 0;
-}
-
-.picker-key:hover {
-    background: color-mix(in srgb, var(--wa-color-surface-raised), var(--wa-color-mix-hover));
-}
-
-.picker-key:active {
-    background: color-mix(in srgb, var(--wa-color-surface-raised), var(--wa-color-mix-active));
-    transform: scale(0.95);
-}
-
-/* ── Placeholder picker ───────────────────────────────────────────── */
-.placeholder-hint {
-    font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-quiet);
-    margin: 0;
-}
-
-
-.placeholder-picker-row {
-    display: flex;
-    gap: var(--wa-space-2xs);
-    flex-wrap: wrap;
-}
-
-.placeholder-key {
-    font-family: var(--wa-font-family-sans) !important;
-    font-size: var(--wa-font-size-s) !important;
-    padding: 0 var(--wa-space-xs) !important;
-    border-color: var(--wa-color-brand-border-quiet) !important;
-    color: var(--wa-color-brand-on-quiet) !important;
-}
-
-.placeholder-key:hover {
-    background: var(--wa-color-brand-fill-quiet) !important;
-}
-
-.form-options-row {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-m);
-    flex-wrap: wrap;
-}
+/* ── Scope select (slotted into SnippetTextEditor options row) ────── */
 
 .scope-select {
     margin-left: auto;
