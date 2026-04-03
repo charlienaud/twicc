@@ -513,6 +513,11 @@ async def sync_and_broadcast(
                 else:
                     await _index_new_items_for_search(session, new_line_nums)
 
+                # Mark session as indexed so the background task doesn't re-index it at next startup
+                if session.search_version != settings.CURRENT_SEARCH_VERSION:
+                    session.search_version = settings.CURRENT_SEARCH_VERSION
+                    await sync_to_async(session.save)(update_fields=["search_version"])
+
     elif session.stale:
         # File reappeared - unstale
         session.stale = False
