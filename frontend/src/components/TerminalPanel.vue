@@ -1,15 +1,17 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
-import { useTerminal } from '../composables/useTerminal'
+import { computed, nextTick, provide, reactive, ref, watch } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useTerminalConfigStore } from '../stores/terminalConfig'
-import AppTooltip from './AppTooltip.vue'
+import { useTerminalTabsStore } from '../stores/terminalTabs'
+import { sendWsMessage } from '../composables/useWebSocket'
 import { toast } from '../composables/useToast'
+import { getUnavailablePlaceholders } from '../utils/snippetPlaceholders'
+import AppTooltip from './AppTooltip.vue'
+import TerminalInstance from './TerminalInstance.vue'
 import ExtraKeysBar from './ExtraKeysBar.vue'
 import ManageCombosDialog from './ManageCombosDialog.vue'
 import ManageSnippetsDialog from './ManageSnippetsDialog.vue'
-import { getUnavailablePlaceholders } from '../utils/snippetPlaceholders'
 
 const props = defineProps({
     sessionId: {
@@ -25,25 +27,7 @@ const props = defineProps({
 const settingsStore = useSettingsStore()
 const dataStore = useDataStore()
 const terminalConfigStore = useTerminalConfigStore()
-
-const {
-    containerRef, isConnected, started, start, reconnect, disconnect,
-    touchMode, hasSelection, copySelection,
-    paneAlternate,
-    canScrollUp, canScrollDown,
-    scrollToEdge, scrollingToEdge, cancelScrollToEdge,
-    activeModifiers, lockedModifiers,
-    handleExtraKeyInput, handleExtraKeyModifierToggle, handleExtraKeyPaste,
-    handleComboPress, handleSnippetPress,
-} = useTerminal(props.sessionId)
-
-function handleTouchModeChange(event) {
-    touchMode.value = event.target.checked ? 'select' : 'scroll'
-}
-
-function handlePaste() {
-    handleExtraKeyPaste()
-}
+const terminalTabsStore = useTerminalTabsStore()
 
 // Resolve projectId from sessionId
 const session = computed(() => props.sessionId ? dataStore.getSession(props.sessionId) : null)
@@ -76,82 +60,279 @@ const snippetsForProject = computed(() => {
 const manageCombosDialogRef = ref(null)
 const manageSnippetsDialogRef = ref(null)
 
-// Lazy init: start the terminal only when the tab becomes active for the first time
+// Terminal instance registration (provide/inject for toolbar + ExtraKeysBar routing)
+const terminalApis = reactive(new Map())
+provide('registerTerminal', (index, api) => { terminalApis.set(index, api) })
+provide('unregisterTerminal', (index) => { terminalApis.delete(index) })
+
+// --- Terminal tab management ---
+const terminals = ref([{ index: 0, label: 'Main' }])
+const activeIndex = ref(0)
+const nextIndex = ref(1) // monotonically increasing counter
+
+const activeTabPanel = computed(() => `term-${activeIndex.value}`)
+const activeApi = computed(() => terminalApis.get(activeIndex.value) || null)
+const isActiveMain = computed(() => activeIndex.value === 0)
+
+// Flattened toolbar state from the active terminal's API.
+// Note: reactive Map's .get() wraps results in reactive(), which auto-unwraps
+// refs — so activeApi.value.isConnected returns the boolean directly, not a Ref.
+const tb = reactive({
+    get isConnected() { return activeApi.value?.isConnected ?? false },
+    get canScrollUp() { return activeApi.value?.canScrollUp ?? false },
+    get canScrollDown() { return activeApi.value?.canScrollDown ?? false },
+    get paneAlternate() { return activeApi.value?.paneAlternate ?? false },
+    get scrollingToEdge() { return activeApi.value?.scrollingToEdge ?? false },
+    get hasSelection() { return activeApi.value?.hasSelection ?? false },
+    get touchMode() { return activeApi.value?.touchMode ?? 'scroll' },
+})
+
+function createTerminal() {
+    const index = nextIndex.value++
+    terminals.value.push({ index, label: `Term ${index + 1}` })
+    activeIndex.value = index
+}
+
+/** Remove a terminal tab (idempotent — no-op if already removed). */
+function removeTerminalTab(index) {
+    if (index === 0) return // main terminal tab is permanent
+    const idx = terminals.value.findIndex(t => t.index === index)
+    if (idx === -1) return
+    terminals.value.splice(idx, 1)
+    if (activeIndex.value === index) {
+        const prevTerminal = terminals.value[Math.max(0, idx - 1)]
+        activeIndex.value = prevTerminal?.index ?? 0
+    }
+}
+
+/** Kill a secondary terminal: send WS message to clean up tmux + remove tab. */
+function killTerminal(index) {
+    if (index === 0) return
+    sendWsMessage({
+        type: 'kill_terminal',
+        session_id: props.sessionId,
+        terminal_index: index,
+    })
+    removeTerminalTab(index)
+}
+
+/** Called when a TerminalInstance's WS disconnects (PTY died, Ctrl+D, network, etc.) */
+function onTerminalDisconnected(index) {
+    if (index === 0) return // main terminal: keep tab, show reconnect overlay
+    removeTerminalTab(index)
+}
+
+function onTerminalTabShow(event) {
+    const panelName = event.detail?.name
+    if (panelName?.startsWith('term-')) {
+        activeIndex.value = parseInt(panelName.slice(5), 10)
+    }
+}
+
+// Focus the active terminal when switching tabs
+watch(activeIndex, () => {
+    nextTick(() => {
+        activeApi.value?.focus?.()
+    })
+})
+
+// --- Toolbar action helpers (delegate to activeApi) ---
+
+function handleScrollToEdge(direction) {
+    const api = activeApi.value
+    if (!api) return
+    api.scrollingToEdge ? api.cancelScrollToEdge() : api.scrollToEdge(direction)
+}
+
+function handleTouchModeChange(event) {
+    const api = activeApi.value
+    if (!api) return
+    api.touchMode = event.target.checked ? 'select' : 'scroll'
+}
+
+function handleTouchModeToggle() {
+    const api = activeApi.value
+    if (!api) return
+    api.touchMode = api.touchMode === 'scroll' ? 'select' : 'scroll'
+}
+
+function handleCopy() {
+    activeApi.value?.copySelection?.()
+}
+
+function handlePaste() {
+    activeApi.value?.handleExtraKeyPaste?.()
+}
+
+function handleDisconnect() {
+    // Send Ctrl+D (EOF) to the active terminal. The shell exits naturally,
+    // the backend sends pty_exited, and the tab is removed for secondary terminals.
+    // For the main terminal, the tab stays with the reconnect overlay.
+    activeApi.value?.disconnect?.()
+}
+
+// --- Discovery and cross-device sync ---
+
+let discoveryDone = false
+
+// When the panel first becomes active, request terminal list from backend
 watch(
     () => props.active,
     (active) => {
-        if (active && !started.value) {
-            start()
+        if (active && !discoveryDone) {
+            discoveryDone = true
+            sendWsMessage({
+                type: 'list_terminals',
+                session_id: props.sessionId,
+            })
         }
     },
     { immediate: true },
 )
+
+// Watch the terminalTabsStore for backend terminal updates
+watch(
+    () => terminalTabsStore.indices[props.sessionId],
+    (backendIndices, oldIndices) => {
+        if (!backendIndices) return
+        syncTerminalsFromBackend(backendIndices, oldIndices)
+    },
+)
+
+function syncTerminalsFromBackend(backendIndices, oldIndices) {
+    const localIndices = new Set(terminals.value.map(t => t.index))
+
+    // Add tabs for backend terminals not present locally
+    for (const index of backendIndices) {
+        if (!localIndices.has(index)) {
+            const label = index === 0 ? 'Main' : `Term ${index + 1}`
+            terminals.value.push({ index, label })
+        }
+    }
+
+    // Remove tabs for terminals killed from another device
+    // (only if we have old indices to compare — skip on first load)
+    if (oldIndices) {
+        const removedIndices = oldIndices.filter(i => !backendIndices.includes(i))
+        for (const index of removedIndices) {
+            if (index === 0) continue // main terminal never removed
+            const idx = terminals.value.findIndex(t => t.index === index)
+            if (idx !== -1) {
+                terminals.value.splice(idx, 1)
+                if (activeIndex.value === index) {
+                    const prevTerminal = terminals.value[Math.max(0, idx - 1)]
+                    activeIndex.value = prevTerminal?.index ?? 0
+                }
+            }
+        }
+    }
+
+    // Sort terminals by index for consistent ordering
+    terminals.value.sort((a, b) => a.index - b.index)
+
+    // Update nextIndex to avoid collisions
+    const maxIndex = Math.max(0, ...backendIndices, ...terminals.value.map(t => t.index))
+    if (maxIndex >= nextIndex.value) {
+        nextIndex.value = maxIndex + 1
+    }
+}
 </script>
 
 <template>
     <div class="terminal-panel">
+        <!-- Merged toolbar: terminal tabs (left) + action buttons (right) -->
         <div class="terminal-actions-bar">
-            <span class="push-right"></span>
+            <!-- Left: wa-tab-group used only for its scrollable nav -->
+            <wa-tab-group
+                :active="activeTabPanel"
+                class="terminal-tab-nav"
+                @wa-tab-show="onTerminalTabShow"
+            >
+                <wa-tab
+                    v-for="term in terminals"
+                    :key="term.index"
+                    slot="nav"
+                    :panel="`term-${term.index}`"
+                >
+                    {{ term.label }}
+                </wa-tab>
 
-            <template v-if="isConnected">
-                <!-- Scroll to edge buttons (shown only when scrolled away from edge,
-                     or always in alternate screen where position is unknown) -->
                 <wa-button
-                    v-if="canScrollUp || paneAlternate"
+                    slot="nav"
+                    variant="brand"
+                    appearance="outlined"
+                    size="small"
+                    class="add-terminal-button"
+                    @click="createTerminal"
+                >
+                    <wa-icon name="plus"></wa-icon>
+                </wa-button>
+            </wa-tab-group>
+
+            <!-- Right: terminal-specific actions (driven by activeApi) -->
+            <div v-if="tb.isConnected" class="terminal-actions">
+                <!-- Scroll to edge buttons -->
+                <wa-button
+                    v-if="tb.canScrollUp || tb.paneAlternate"
                     id="terminal-scroll-top-button"
                     variant="neutral"
                     appearance="plain"
                     size="small"
                     class="scroll-edge-button"
-                    :loading="scrollingToEdge"
-                    @click="scrollingToEdge ? cancelScrollToEdge() : scrollToEdge('top')"
+                    :loading="tb.scrollingToEdge"
+                    @click="handleScrollToEdge('top')"
                 >
                     <wa-icon name="angles-up"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="canScrollUp || paneAlternate" for="terminal-scroll-top-button">Scroll to top</AppTooltip>
+                <AppTooltip
+                    v-if="tb.canScrollUp || tb.paneAlternate"
+                    for="terminal-scroll-top-button"
+                >Scroll to top</AppTooltip>
 
                 <wa-button
-                    v-if="canScrollDown || paneAlternate"
+                    v-if="tb.canScrollDown || tb.paneAlternate"
                     id="terminal-scroll-bottom-button"
                     variant="neutral"
                     appearance="plain"
                     size="small"
                     class="scroll-edge-button"
-                    :loading="scrollingToEdge"
-                    @click="scrollingToEdge ? cancelScrollToEdge() : scrollToEdge('bottom')"
+                    :loading="tb.scrollingToEdge"
+                    @click="handleScrollToEdge('bottom')"
                 >
                     <wa-icon name="angles-down"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="canScrollDown || paneAlternate" for="terminal-scroll-bottom-button">Scroll to bottom</AppTooltip>
+                <AppTooltip
+                    v-if="tb.canScrollDown || tb.paneAlternate"
+                    for="terminal-scroll-bottom-button"
+                >Scroll to bottom</AppTooltip>
 
                 <!-- Mobile-only: scroll/select mode toggle -->
                 <div v-if="settingsStore.isTouchDevice" class="touch-mode-group">
                     <span
                         class="touch-mode-label"
-                        @click="touchMode = touchMode === 'scroll' ? 'select' : 'scroll'"
+                        @click="handleTouchModeToggle"
                     >Scroll</span>
                     <wa-switch
                         size="small"
                         class="touch-mode-switch"
-                        :checked="touchMode === 'select'"
+                        :checked="tb.touchMode === 'select'"
                         @change="handleTouchModeChange"
                     >Select</wa-switch>
                 </div>
 
                 <!-- Copy button (all devices) -->
-                <Transition name="copy-fade">
-                    <wa-button
-                        v-if="hasSelection"
-                        variant="primary"
-                        appearance="filled"
-                        size="small"
-                        class="copy-button"
-                        @click="copySelection"
-                    >
-                            <wa-icon slot="start" name="copy" variant="regular"></wa-icon>
-                            Copy
-                        </wa-button>
-                </Transition>
+                <wa-button
+                    v-if="tb.hasSelection"
+                    id="terminal-copy-button"
+                    variant="neutral"
+                    appearance="filled"
+                    size="small"
+                    class="copy-button"
+                    @click="handleCopy"
+                >
+                    <wa-icon name="copy" variant="regular"></wa-icon>
+                </wa-button>
+                <AppTooltip v-if="tb.hasSelection" for="terminal-copy-button">Copy selection</AppTooltip>
 
                 <!-- Paste button -->
                 <wa-button
@@ -162,58 +343,54 @@ watch(
                     class="paste-button"
                     @click="handlePaste"
                 >
-                    <wa-icon slot="start" name="paste" variant="regular"></wa-icon>
-                    Paste
+                    <wa-icon name="paste" variant="regular"></wa-icon>
                 </wa-button>
                 <AppTooltip for="terminal-paste-button">Paste from clipboard</AppTooltip>
 
+                <!-- Disconnect / Kill button -->
                 <wa-button
                     id="terminal-disconnect-button"
                     variant="danger"
                     appearance="filled"
                     size="small"
                     class="disconnect-button"
-                    @click="disconnect"
+                    @click="handleDisconnect"
                 >
-                    <wa-icon name="ban" label="Disconnect"></wa-icon>
+                    <wa-icon name="ban" :label="isActiveMain ? 'Disconnect' : 'Kill terminal'"></wa-icon>
                 </wa-button>
-                <AppTooltip for="terminal-disconnect-button">Disconnect terminal session</AppTooltip>
-            </template>
+                <AppTooltip for="terminal-disconnect-button">{{ isActiveMain ? 'Disconnect' : 'Kill terminal' }}</AppTooltip>
+            </div>
         </div>
-        <div class="terminal-area">
-            <div ref="containerRef" class="terminal-container"></div>
 
-            <!-- Disconnect overlay (only covers terminal area, not ExtraKeysBar) -->
-            <div v-if="started && !isConnected" class="disconnect-overlay">
-                <wa-callout variant="warning" appearance="outlined">
-                    <wa-icon slot="icon" name="plug-circle-xmark"></wa-icon>
-                    <div class="disconnect-content">
-                        <div>Terminal disconnected</div>
-                        <wa-button
-                            variant="warning"
-                            appearance="outlined"
-                            size="small"
-                            @click="reconnect"
-                        >
-                            <wa-icon slot="start" name="arrow-rotate-right"></wa-icon>
-                            Reconnect
-                        </wa-button>
-                    </div>
-                </wa-callout>
+        <!-- Terminal panels: all overlay each other, only the active one is visible.
+             Uses visibility:hidden (not display:none) so hidden terminals keep their
+             dimensions — prevents xterm.js resize flash on tab switch. -->
+        <div class="terminal-panels-container">
+            <div
+                v-for="term in terminals"
+                :key="term.index"
+                :class="['terminal-panel-wrapper', { active: activeIndex === term.index }]"
+            >
+                <TerminalInstance
+                    :session-id="sessionId"
+                    :terminal-index="term.index"
+                    :active="active && activeIndex === term.index"
+                    @disconnected="onTerminalDisconnected(term.index)"
+                />
             </div>
         </div>
 
         <ExtraKeysBar
-            :active-modifiers="activeModifiers"
-            :locked-modifiers="lockedModifiers"
+            :active-modifiers="activeApi?.activeModifiers ?? { ctrl: false, alt: false, shift: false }"
+            :locked-modifiers="activeApi?.lockedModifiers ?? { ctrl: false, alt: false, shift: false }"
             :is-touch-device="settingsStore.isTouchDevice"
             :combos="terminalConfigStore.combos"
             :snippets="snippetsForProject"
-            @key-input="handleExtraKeyInput"
-            @modifier-toggle="handleExtraKeyModifierToggle"
-            @paste="handleExtraKeyPaste"
-            @combo-press="handleComboPress"
-            @snippet-press="handleSnippetPress"
+            @key-input="(...args) => activeApi?.handleExtraKeyInput?.(...args)"
+            @modifier-toggle="(...args) => activeApi?.handleExtraKeyModifierToggle?.(...args)"
+            @paste="() => activeApi?.handleExtraKeyPaste?.()"
+            @combo-press="(...args) => activeApi?.handleComboPress?.(...args)"
+            @snippet-press="(...args) => activeApi?.handleSnippetPress?.(...args)"
             @snippet-disabled-press="(snippet) => toast.warning(snippet._disabledReason)"
             @manage-combos="manageCombosDialogRef?.open()"
             @manage-snippets="manageSnippetsDialogRef?.open()"
@@ -234,16 +411,63 @@ watch(
     flex-direction: column;
 }
 
+/* ── Merged toolbar ─────────────────────────────────────── */
+
 .terminal-actions-bar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     justify-content: start;
-    gap: var(--wa-space-m);
+    column-gap: var(--wa-space-m);
     padding: var(--wa-space-2xs) var(--wa-space-s);
     border-bottom: 1px solid var(--wa-color-surface-border);
     flex-shrink: 0;
     min-height: 2rem;
+}
+
+/* wa-tab-group used only for its scrollable nav — hide its body */
+.terminal-tab-nav {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--wa-font-size-s);
+    --indicator-color: var(--wa-color-primary-500);
+    --track-color: transparent;
+    --track-width: 2px;
+}
+.terminal-tab-nav::part(base) {
+    overflow: hidden;
+}
+.terminal-tab-nav::part(body) {
+    display: none;
+}
+.terminal-tab-nav::part(nav) {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.terminal-tab-nav::part(tabs) {
+    align-items: center;
+}
+.terminal-tab-nav wa-tab::part(base) {
+    padding: 0.25em 0.75em;
+}
+.terminal-tab-nav wa-tab[active] {
+    margin-block-end: 0;
+}
+.add-terminal-button {
+    font-size: var(--wa-font-size-3xs);
+    align-self: center;
+    &::part(label) {
+        scale: 1.2;
+    }
+}
+
+.terminal-actions {
+    margin-inline-start: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-m);
+    flex-shrink: 0;
 }
 
 .scroll-edge-button {
@@ -258,10 +482,6 @@ watch(
 
 .scroll-edge-button:hover {
     opacity: 1;
-}
-
-.push-right {
-    margin-inline-start: auto;
 }
 
 .disconnect-button {
@@ -303,54 +523,25 @@ watch(
     --wa-form-control-height: round( calc(2 * var(--wa-form-control-padding-block) + 1em * var(--wa-form-control-value-line-height)), 1px );
 }
 
-/* Copy button enter/leave transition */
-.copy-fade-enter-active,
-.copy-fade-leave-active {
-    transition: opacity 0.15s ease, transform 0.15s ease;
-}
 
-.copy-fade-enter-from,
-.copy-fade-leave-to {
-    opacity: 0;
-    transform: scale(0.9);
-}
+/* ── Terminal panels ─────────────────────────────────────── */
 
-.terminal-area {
+.terminal-panels-container {
     flex: 1;
     min-height: 0;
     position: relative;
+    overflow: hidden;
 }
 
-.terminal-container {
-    height: 100%;
-    width: 100%;
-    padding: var(--wa-space-2xs);
-}
-
-/* Ensure xterm fills its container */
-.terminal-container :deep(.xterm) {
-    height: 100%;
-}
-
-.terminal-container :deep(.xterm-viewport) {
-    overflow-y: auto !important;
-}
-
-.disconnect-overlay {
+.terminal-panel-wrapper {
     position: absolute;
     inset: 0;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.4);
-    z-index: 10;
+    flex-direction: column;
+    visibility: hidden;
 }
 
-.disconnect-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--wa-space-m);
-    text-align: center;
+.terminal-panel-wrapper.active {
+    visibility: visible;
 }
 </style>

@@ -190,14 +190,17 @@ function imeKeyToAnsiSequence(event, { ignoreShift = false, applicationCursorMod
  * (typically when the Terminal tab becomes active for the first time).
  *
  * @param {string} sessionId - The session ID (non-reactive, captured once)
+ * @param {number} terminalIndex - The terminal index (0 = main, N = secondary)
  * @returns {{ containerRef: import('vue').Ref, isConnected: import('vue').Ref<boolean>, started: import('vue').Ref<boolean>, start: () => void, reconnect: () => void }}
  */
-export function useTerminal(sessionId) {
+export function useTerminal(sessionId, terminalIndex = 0) {
     const settingsStore = useSettingsStore()
     const dataStore = useDataStore()
     const containerRef = ref(null)
     const isConnected = ref(false)
     const started = ref(false)
+    /** True when the backend signals the PTY process exited (vs network disconnect). */
+    const ptyExited = ref(false)
 
     // ── Touch mode (mobile) ────────────────────────────────────────────
     // 'scroll' = normal scroll (default), 'select' = touch-drag selects text
@@ -288,7 +291,7 @@ export function useTerminal(sessionId) {
         const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
         const session = dataStore.getSession(sessionId)
         const projectId = session?.project_id || '_'
-        const base = `${wsProtocol}//${location.host}/ws/terminal/${projectId}/${sessionId}/`
+        const base = `${wsProtocol}//${location.host}/ws/terminal/${projectId}/${sessionId}/${terminalIndex}/`
         return shouldUseTmux() ? `${base}?tmux=1` : base
     }
 
@@ -300,6 +303,7 @@ export function useTerminal(sessionId) {
             return // already connected or connecting
         }
 
+        ptyExited.value = false
         ws = new WebSocket(getWsUrl())
 
         ws.onopen = () => {
@@ -328,6 +332,13 @@ export function useTerminal(sessionId) {
             if (data.charAt(0) === '{') {
                 try {
                     const msg = JSON.parse(data)
+                    if (msg.type === 'pty_exited') {
+                        // Backend signals the PTY process died (shell exited).
+                        // Set flag before WS close so the frontend can distinguish
+                        // "terminal ended" from "network issue".
+                        ptyExited.value = true
+                        return
+                    }
                     if (msg.type === 'pane_state') {
                         paneAlternate.value = msg.alternate_on
                         // Update scroll position from tmux (non-alternate only)
@@ -1759,8 +1770,13 @@ export function useTerminal(sessionId) {
         cleanup()
     })
 
+    /** Focus the terminal (e.g., after switching tabs). */
+    function focus() {
+        terminal?.focus()
+    }
+
     return {
-        containerRef, isConnected, started, start, reconnect, disconnect,
+        containerRef, isConnected, started, ptyExited, start, reconnect, disconnect, focus,
         // Touch mode (mobile)
         touchMode, hasSelection, copySelection,
         // Scroll state

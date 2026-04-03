@@ -6,7 +6,7 @@ the channel layer overhead on every message. The ASGI send/receive
 callables are used directly, giving near-native WebSocket performance.
 
 Provides a PTY-backed terminal per session, communicating over a dedicated
-WebSocket endpoint (`/ws/terminal/<project_id>/<session_id>/`).
+WebSocket endpoint (`/ws/terminal/<project_id>/<session_id>/<terminal_index>/`).
 
 Protocol:
   Client → Server (JSON text frames):
@@ -134,12 +134,18 @@ def wants_tmux(scope: dict) -> bool:
     return params.get("tmux", ["0"])[0] == "1"
 
 
-def tmux_session_name(session_id: str) -> str:
-    """Deterministic tmux session name from a twicc session ID.
+def tmux_session_name(session_id: str, terminal_index: int = 0) -> str:
+    """Return the tmux session name for a given twicc session and terminal index.
+
+    Index 0 (main terminal) uses the original naming for backward compatibility.
+    Index N (N >= 1) appends '__N' as suffix.
 
     tmux session names cannot contain dots or colons, so we replace them.
     """
-    return "twicc-" + session_id.replace(".", "_").replace(":", "_")
+    base = "twicc-" + session_id.replace(".", "_").replace(":", "_")
+    if terminal_index == 0:
+        return base
+    return f"{base}__{terminal_index}"
 
 
 # ── PTY helpers (pure functions, no class needed) ─────────────────────────
@@ -192,7 +198,7 @@ def spawn_pty(cwd: str) -> tuple[int, int]:
     return child_pid, master_fd
 
 
-def spawn_tmux_pty(cwd: str, session_id: str) -> tuple[int, int]:
+def spawn_tmux_pty(cwd: str, session_id: str, terminal_index: int = 0) -> tuple[int, int]:
     """Fork a PTY running tmux, attaching to or creating a named session.
 
     Uses ``tmux -L twicc -f /dev/null new-session -A -s <name>`` which:
@@ -209,7 +215,7 @@ def spawn_tmux_pty(cwd: str, session_id: str) -> tuple[int, int]:
     if tmux_path is None:
         raise FileNotFoundError("tmux is not installed")
 
-    name = tmux_session_name(session_id)
+    name = tmux_session_name(session_id, terminal_index)
     child_pid, master_fd = pty.fork()
 
     if child_pid == 0:
@@ -265,13 +271,13 @@ def cleanup_pty(master_fd: int | None, child_pid: int | None) -> None:
             pass
 
 
-def tmux_session_exists(session_id: str) -> bool:
-    """Check if a tmux session exists for the given twicc session ID."""
+def tmux_session_exists(session_id: str, terminal_index: int = 0) -> bool:
+    """Check if a tmux session exists for the given twicc session ID and terminal index."""
     tmux_path = get_tmux_path()
     if tmux_path is None:
         return False
 
-    name = tmux_session_name(session_id)
+    name = tmux_session_name(session_id, terminal_index)
     try:
         result = subprocess.run(
             [tmux_path, "-L", TMUX_SOCKET_NAME, "has-session", "-t", name],
@@ -283,8 +289,47 @@ def tmux_session_exists(session_id: str) -> bool:
         return False
 
 
-def kill_tmux_session(session_id: str) -> bool:
-    """Kill the tmux session for the given twicc session ID.
+def list_tmux_sessions_for_session(session_id: str) -> list[int]:
+    """List all terminal indices that have active tmux sessions for a given twicc session.
+
+    Queries the twicc tmux socket and filters by session name prefix.
+    Returns a sorted list of terminal indices (e.g., [0, 3, 7]).
+    Returns an empty list if tmux is not installed or no sessions exist.
+    """
+    tmux_path = get_tmux_path()
+    if tmux_path is None:
+        return []
+
+    try:
+        result = subprocess.run(
+            [tmux_path, "-L", TMUX_SOCKET_NAME, "list-sessions", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+
+    prefix = tmux_session_name(session_id, 0)  # "twicc-<normalized_id>"
+    indices = []
+    for name in result.stdout.strip().split("\n"):
+        if not name:
+            continue
+        if name == prefix:
+            indices.append(0)
+        elif name.startswith(prefix + "__"):
+            suffix = name[len(prefix) + 2:]
+            try:
+                indices.append(int(suffix))
+            except ValueError:
+                continue
+    return sorted(indices)
+
+
+def kill_tmux_session(session_id: str, terminal_index: int = 0) -> bool:
+    """Kill the tmux session for the given twicc session ID and terminal index.
 
     Called when a session is archived to clean up persistent tmux sessions.
     Returns True if the session was killed, False if it didn't exist or
@@ -294,7 +339,7 @@ def kill_tmux_session(session_id: str) -> bool:
     if tmux_path is None:
         return False
 
-    name = tmux_session_name(session_id)
+    name = tmux_session_name(session_id, terminal_index)
     try:
         result = subprocess.run(
             [tmux_path, "-L", TMUX_SOCKET_NAME, "kill-session", "-t", name],
@@ -307,7 +352,20 @@ def kill_tmux_session(session_id: str) -> bool:
         return False
 
 
-def tmux_set_option(session_id: str, option: str, value: str) -> bool:
+def kill_all_tmux_sessions(session_id: str) -> int:
+    """Kill all tmux sessions for the given twicc session (all terminal indices).
+
+    Returns the number of sessions killed.
+    """
+    indices = list_tmux_sessions_for_session(session_id)
+    killed = 0
+    for index in indices:
+        if kill_tmux_session(session_id, index):
+            killed += 1
+    return killed
+
+
+def tmux_set_option(session_id: str, option: str, value: str, terminal_index: int = 0) -> bool:
     """Set a tmux session option.
 
     Returns True on success, False on failure.
@@ -316,7 +374,7 @@ def tmux_set_option(session_id: str, option: str, value: str) -> bool:
     if tmux_path is None:
         return False
 
-    name = tmux_session_name(session_id)
+    name = tmux_session_name(session_id, terminal_index)
     try:
         result = subprocess.run(
             [tmux_path, "-L", TMUX_SOCKET_NAME, "set-option", "-t", name, option, value],
@@ -342,7 +400,7 @@ def _tmux_set_global_option(option: str, value: str) -> bool:
         return False
 
 
-def _tmux_scroll(session_id: str, lines: int) -> tuple[int | None, int | None]:
+def _tmux_scroll(session_id: str, lines: int, terminal_index: int = 0) -> tuple[int | None, int | None]:
     """Scroll the tmux pane by the given number of lines.
 
     Enters hidden copy-mode (-eH) if not already in copy-mode, then
@@ -355,7 +413,7 @@ def _tmux_scroll(session_id: str, lines: int) -> tuple[int | None, int | None]:
     tmux_path = get_tmux_path()
     if tmux_path is None:
         return None, None
-    name = tmux_session_name(session_id)
+    name = tmux_session_name(session_id, terminal_index)
     cmd = "scroll-up" if lines < 0 else "scroll-down"
     count = abs(lines)
     # Single tmux invocation: enter copy-mode (no-op if already in) + scroll N lines
@@ -386,7 +444,7 @@ def _tmux_scroll(session_id: str, lines: int) -> tuple[int | None, int | None]:
     return None, None
 
 
-def _tmux_pane_state(session_id: str) -> dict | None:
+def _tmux_pane_state(session_id: str, terminal_index: int = 0) -> dict | None:
     """Query the full pane state in a single tmux call.
 
     Returns a dict with:
@@ -401,7 +459,7 @@ def _tmux_pane_state(session_id: str) -> dict | None:
     if tmux_path is None:
         return None
 
-    name = tmux_session_name(session_id)
+    name = tmux_session_name(session_id, terminal_index)
     try:
         result = subprocess.run(
             [tmux_path, "-L", TMUX_SOCKET_NAME, "display-message",
@@ -430,17 +488,17 @@ def _tmux_pane_state(session_id: str) -> dict | None:
 _PANE_POLL_INTERVAL = 2  # seconds
 
 
-async def _tmux_pane_monitor(session_id: str, send) -> None:
+async def _tmux_pane_monitor(session_id: str, send, terminal_index: int = 0) -> None:
     """Periodically poll tmux pane state and push updates to the frontend.
 
     Tracks: alternate screen mode, copy-mode status, scroll position,
     and history size. Only sends a message when something changed.
     """
-    prev_state = await asyncio.to_thread(_tmux_pane_state, session_id)
+    prev_state = await asyncio.to_thread(_tmux_pane_state, session_id, terminal_index)
     try:
         while True:
             await asyncio.sleep(_PANE_POLL_INTERVAL)
-            state = await asyncio.to_thread(_tmux_pane_state, session_id)
+            state = await asyncio.to_thread(_tmux_pane_state, session_id, terminal_index)
             if state is None:
                 continue
             if state != prev_state:
@@ -485,6 +543,7 @@ async def terminal_application(scope, receive, send):
     # ── Resolve working directory and session state ──────────────────
     session_id = scope["url_route"]["kwargs"]["session_id"]
     project_id = scope["url_route"]["kwargs"].get("project_id")
+    terminal_index = scope["url_route"]["kwargs"].get("terminal_index", 0)
     # A placeholder "_" is sent by the frontend when no project is associated
     if project_id == "_":
         project_id = None
@@ -501,12 +560,12 @@ async def terminal_application(scope, receive, send):
 
     # For archived sessions, only use tmux if a session already exists
     # (don't create new tmux sessions for archived conversations).
-    if use_tmux and archived and not tmux_session_exists(session_id):
+    if use_tmux and archived and not tmux_session_exists(session_id, terminal_index):
         use_tmux = False
 
     try:
         if use_tmux:
-            child_pid, master_fd = spawn_tmux_pty(cwd, session_id)
+            child_pid, master_fd = spawn_tmux_pty(cwd, session_id, terminal_index)
         else:
             child_pid, master_fd = spawn_pty(cwd)
     except OSError:
@@ -528,13 +587,13 @@ async def terminal_application(scope, receive, send):
         # forks and returns immediately, but the child needs time to exec
         # tmux and create the session before we can configure it.
         for _ in range(20):  # up to 2s
-            if await asyncio.to_thread(tmux_session_exists, session_id):
+            if await asyncio.to_thread(tmux_session_exists, session_id, terminal_index):
                 break
             await asyncio.sleep(0.1)
 
         # Force mouse off at both session and global level — ensures clean
         # state regardless of prior tmux server configuration.
-        await asyncio.to_thread(tmux_set_option, session_id, "mouse", "off")
+        await asyncio.to_thread(tmux_set_option, session_id, "mouse", "off", terminal_index=terminal_index)
         await asyncio.to_thread(_tmux_set_global_option, "mouse", "off")
 
     # ── PTY output reader task ────────────────────────────────────────
@@ -624,7 +683,7 @@ async def terminal_application(scope, receive, send):
                     scroll_lines = msg.get("lines", 0)
                     if scroll_lines:
                         pos, size = await asyncio.to_thread(
-                            _tmux_scroll, session_id, scroll_lines,
+                            _tmux_scroll, session_id, scroll_lines, terminal_index=terminal_index,
                         )
                         if pos is not None:
                             await send({"type": "websocket.send", "text": json.dumps({
@@ -642,7 +701,27 @@ async def terminal_application(scope, receive, send):
     # ── tmux pane monitor (detects alternate screen changes) ─────────
     monitor_task = None
     if use_tmux:
-        monitor_task = asyncio.create_task(_tmux_pane_monitor(session_id, send))
+        monitor_task = asyncio.create_task(_tmux_pane_monitor(session_id, send, terminal_index=terminal_index))
+
+    # ── Broadcast terminal_created to all clients ─────────────────────
+    try:
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            await channel_layer.group_send(
+                "updates",
+                {
+                    "type": "broadcast",
+                    "data": {
+                        "type": "terminal_created",
+                        "session_id": session_id,
+                        "terminal_index": terminal_index,
+                    },
+                },
+            )
+    except Exception:
+        logger.debug("Failed to broadcast terminal_created", exc_info=True)
 
     try:
         # Wait for either the PTY to die or the client to disconnect
@@ -663,8 +742,13 @@ async def terminal_application(scope, receive, send):
             except asyncio.CancelledError:
                 pass
 
-        # If the PTY died (sender finished first), close the WebSocket
+        # If the PTY died (sender finished first), notify the client then close
         if sender_task in done:
+            try:
+                import orjson
+                await send({"type": "websocket.send", "text": orjson.dumps({"type": "pty_exited"}).decode()})
+            except Exception:
+                pass
             try:
                 await send({"type": "websocket.close", "code": 1000})
             except Exception:

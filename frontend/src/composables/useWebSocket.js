@@ -685,6 +685,21 @@ export function useWebSocket() {
                     useTerminalConfigStore().applyConfig(msg.config)
                 })
                 break
+            case 'terminal_list':
+                import('../stores/terminalTabs').then(({ useTerminalTabsStore }) => {
+                    useTerminalTabsStore().setIndices(msg.session_id, msg.terminals)
+                })
+                break
+            case 'terminal_created':
+                import('../stores/terminalTabs').then(({ useTerminalTabsStore }) => {
+                    useTerminalTabsStore().addIndex(msg.session_id, msg.terminal_index)
+                })
+                break
+            case 'terminal_killed':
+                import('../stores/terminalTabs').then(({ useTerminalTabsStore }) => {
+                    useTerminalTabsStore().removeIndex(msg.session_id, msg.terminal_index)
+                })
+                break
             case 'startup_progress':
                 store.setStartupProgress(msg.phase, msg.current, msg.total, msg.completed)
                 break
