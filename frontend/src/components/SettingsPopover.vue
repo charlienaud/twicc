@@ -1073,6 +1073,77 @@ function onPopoverShow() {
     }
 }
 
+/* -- Scroll shadow indicators (progressive enhancement) -- */
+
+@supports (container-type: scroll-state) {
+    .settings-nav,
+    .settings-detail {
+        --_panel-pad: var(--wa-space-m);
+        container-type: scroll-state;
+    }
+
+    .settings-nav::before,
+    .settings-nav::after,
+    .settings-detail::before,
+    .settings-detail::after {
+        --_shadow-color: color-mix(in srgb, var(--wa-color-text-normal) 12%, transparent);
+        content: '';
+        display: block;
+        flex-shrink: 0;
+        position: sticky;
+        height: 16px;
+        margin-inline: calc(-1 * var(--_panel-pad));
+        z-index: 2;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+
+    .settings-nav::before,
+    .settings-detail::before {
+        top: 0;
+        translate: 0 calc(-1 * var(--_panel-pad));
+        background: linear-gradient(to bottom, var(--_shadow-color), transparent);
+    }
+
+    .settings-nav::after,
+    .settings-detail::after {
+        bottom: 0;
+        translate: 0 var(--_panel-pad);
+        background: linear-gradient(to top, var(--_shadow-color), transparent);
+    }
+
+    /* Flex ordering for nav (flex-direction: column) */
+    .settings-nav::before {
+        order: -1;
+    }
+
+    .settings-nav::after {
+        order: 9999;
+    }
+
+    @container scroll-state(scrollable: top) {
+        .settings-nav::before,
+        .settings-detail::before {
+            opacity: 1;
+        }
+    }
+
+    @container scroll-state(scrollable: bottom) {
+        .settings-nav::after,
+        .settings-detail::after {
+            opacity: 1;
+        }
+    }
+
+    @media (width < 640px) {
+        .settings-nav,
+        .settings-detail {
+            --_panel-pad: var(--wa-space-s);
+        }
+    }
+}
+
 /* -- Settings notice (footer bar) -- */
 
 .settings-notice {
