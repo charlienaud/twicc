@@ -482,9 +482,9 @@ function onPopoverShow() {
                         {{ section.navLabel || section.label }}
                         <wa-icon v-if="section.synced" name="cloud" class="synced-icon"></wa-icon>
                     </button>
-                    <wa-divider class="settings-nav-divider"></wa-divider>
+                    <wa-divider class="settings-nav-divider shortcuts-nav-divider"></wa-divider>
                     <button
-                        class="settings-nav-item"
+                        class="settings-nav-item shortcuts-nav-item"
                         :class="{ active: activeSection === 'shortcuts' }"
                         @click="selectSection('shortcuts')"
                     >
@@ -1209,6 +1209,14 @@ function onPopoverShow() {
 
 .settings-nav-divider {
     --spacing: var(--wa-space-2xs);
+}
+
+/* Hide shortcuts entry on touch devices (no keyboard) */
+@media (pointer: coarse) {
+    .shortcuts-nav-divider,
+    .shortcuts-nav-item {
+        display: none;
+    }
 }
 
 /* -- Keyboard shortcuts section -- */
