@@ -343,11 +343,14 @@ const directContentSource = computed(() => {
 
 // --- Read tool: syntax-highlighted result ---
 
-// Regex to match a cat -n formatted line: optional spaces, digits, → arrow, then content
-const CAT_N_LINE_RE = /^(\s*\d+)→(.*)$/
+// Regex to match a cat -n formatted line: optional spaces, digits, separator (→ or tab), then content.
+// Old format used → (U+2192 arrow), new format uses \t (standard cat -n). Both must be supported.
+const CAT_N_LINE_RE = /^(\s*\d+)[→\t](.*)$/
 
 /**
  * Parse cat -n formatted content (as produced by Claude's Read tool).
+ * Supports both the old format (line numbers separated by → arrow) and
+ * the new format (line numbers separated by tab character).
  * Returns the clean code, start line, and end line — or null if the content
  * doesn't match the expected format.
  */
