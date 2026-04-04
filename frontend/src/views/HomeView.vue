@@ -69,7 +69,7 @@ onBeforeUnmount(() => {
                 <ActivitySparkline :data="globalWeeklyActivity" />
             </span>
             <AppTooltip for="home-global-sparkline">Overall activity (message turns per week)</AppTooltip>
-            <wa-button class="new-project-button" variant="neutral" appearance="outlined" size="small" @click="openCreateDialog">
+            <wa-button v-if="!store.isInitialSyncInProgress" class="new-project-button" variant="neutral" appearance="outlined" size="small" @click="openCreateDialog">
                 <wa-icon slot="start" name="plus"></wa-icon>
                 New project
             </wa-button>
