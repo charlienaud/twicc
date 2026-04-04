@@ -219,15 +219,35 @@ watch(isOpen, (open) => {
 })
 
 /**
- * Handle Escape key to close the popup.
- * Intercepts the event before FileTreePanel's own Escape handler
- * (which would try to focus the hidden search input).
+ * Handle special keys for the popup (capture phase, fires before FileTreePanel).
+ *
+ * - Escape: close the popup (prevents FileTreePanel from focusing its search input).
+ * - PageUp on root node when rootPath ≠ '/': navigate to parent directory
+ *   (same as clicking the ↑ button in the header).
  */
-function onPickerKeydown(event) {
+async function onPickerKeydown(event) {
     if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
         closePopup()
+        return
+    }
+
+    if (event.key === 'PageUp' && rootPath.value && rootPath.value !== '/') {
+        const activeEl = document.activeElement
+        if (
+            activeEl?.getAttribute('role') === 'treeitem'
+            && activeEl?.dataset?.path === rootPath.value
+        ) {
+            event.preventDefault()
+            event.stopPropagation()
+            await navigateUp()
+            await nextTick()
+            await nextTick()
+            if (rootPath.value) {
+                fileTreePanelRef.value?.scrollToPath(rootPath.value)
+            }
+        }
     }
 }
 
@@ -260,7 +280,7 @@ onBeforeUnmount(() => {
             shift
             shift-padding="8"
         >
-            <div class="picker-panel" @keydown="onPickerKeydown">
+            <div class="picker-panel" @keydown.capture="onPickerKeydown">
                 <!-- Header: current path + navigate up -->
                 <div class="picker-header">
                     <wa-button
