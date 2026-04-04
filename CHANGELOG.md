@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - List main keyboard shortcuts in the settings panel
 - Add "View in Files tab" button for Read/Write/Edit tools
 - Display image files (PNG, JPG, GIF, WebP…) in the Files tab instead of "Binary file cannot be displayed", with SVG preview toggle
+- Dynamic favicon: colored dot reflects global session activity (blue for active work, orange for unread content)
 
 ### Changed
 

@@ -350,6 +350,37 @@ export const useDataStore = defineStore('data', {
             return count
         },
 
+        /**
+         * Whether any session globally is in assistant_turn state.
+         * Used by the dynamic favicon to show a blue activity dot.
+         * @returns {boolean}
+         */
+        hasGlobalAssistantTurn: (state) => {
+            for (const processState of Object.values(state.processStates)) {
+                if (processState.state === 'assistant_turn') return true
+            }
+            return false
+        },
+
+        /**
+         * Count sessions with unread content across all projects.
+         * Same logic as getProjectUnreadCount but without project filter.
+         * @returns {number} The number of unread sessions
+         */
+        getGlobalUnreadCount: (state) => {
+            let count = 0
+            for (const session of Object.values(state.sessions)) {
+                if (session.draft || session.archived || session.parent_session_id) continue
+                if (!session.last_new_content_at) continue
+                if (session.last_viewed_at && session.last_new_content_at <= session.last_viewed_at) continue
+                // If process is running, only count when in user_turn
+                const processState = state.processStates[session.id]
+                if (processState && processState.state !== 'user_turn') continue
+                count++
+            }
+            return count
+        },
+
         // Startup progress getters
         initialSyncProgress: (state) => state.startupProgress.initial_sync || null,
         backgroundComputeProgress: (state) => state.startupProgress.background_compute || null,

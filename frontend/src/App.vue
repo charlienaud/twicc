@@ -7,6 +7,7 @@ import { useDataStore } from './stores/data'
 import { useSettingsStore } from './stores/settings'
 import { useAuthStore } from './stores/auth'
 import { THEME_MODE } from './constants'
+import { useFavicon } from './composables/useFavicon'
 import ConnectionIndicator from './components/ConnectionIndicator.vue'
 import CustomNotification from './components/CustomNotification.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -25,6 +26,9 @@ const isConnecting = computed(() => authStore.isConnecting)
 // Initialize WebSocket connection for real-time updates.
 // Connection is deferred until authenticated (see useWebSocket).
 const { wsStatus, openWs, closeWs } = useWebSocket()
+
+// Dynamic favicon: overlays a status badge based on global process state
+useFavicon()
 
 // Load initial data and connect WebSocket when authenticated
 const dataStore = useDataStore()
