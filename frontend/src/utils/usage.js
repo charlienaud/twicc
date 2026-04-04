@@ -187,7 +187,7 @@ function recentBurnRate(utilization, fetchedAt, reference, windowMs) {
  * @returns {object} Computed quota info
  */
 function computeQuota(utilization, resetsAt, fetchedAt, windowMs, smoothingPeriodMs, refLong, refShort, lookbackLongMs, lookbackShortMs) {
-    const emptyRecent = { rate: null, deltaMs: null }
+    const emptyRecent = { rate: null, deltaMs: null, lookbackMs: null }
 
     if (utilization == null) {
         return {
@@ -230,13 +230,13 @@ function computeQuota(utilization, resetsAt, fetchedAt, windowMs, smoothingPerio
 
     function _computeRecent(ref, lookbackMs) {
         if (elapsedMs != null && elapsedMs < lookbackMs && rate != null) {
-            return { rate, deltaMs: elapsedMs }
+            return { rate, deltaMs: elapsedMs, lookbackMs }
         }
         const r = recentBurnRate(utilization, fetchedAt, ref, windowMs)
         const deltaMs = (r != null && ref)
             ? new Date(fetchedAt).getTime() - new Date(ref.fetchedAt).getTime()
             : null
-        return { rate: r, deltaMs }
+        return { rate: r, deltaMs, lookbackMs }
     }
 
     return {
@@ -271,27 +271,51 @@ function computePeriodCost(raw) {
 }
 
 /**
- * Format a recent burn rate time delta for display in tooltips.
+ * Format a single duration in ms as a human-readable string.
  *
- * @param {number|null} deltaMs - Time span in milliseconds
+ * @param {number} ms - Duration in milliseconds (must be > 0)
  * @param {boolean} roundToHour - If true, round to nearest hour (for 7d window).
  *                                 If false, round to nearest 10 minutes (for 5h window).
- * @returns {string|null} Formatted duration, e.g. "20h", "50min", "1h", or null
+ * @returns {string} Formatted duration, e.g. "20h", "50min", "1h"
  */
-export function formatRecentDelta(deltaMs, roundToHour) {
-    if (deltaMs == null || deltaMs <= 0) return null
-
+function formatDuration(ms, roundToHour) {
     if (roundToHour) {
-        const hours = Math.round(deltaMs / (60 * 60 * 1000))
+        const hours = Math.round(ms / (60 * 60 * 1000))
         return `${hours}h`
     }
 
     // Round to nearest 10 minutes
-    const totalMinutes = Math.round(deltaMs / (10 * 60 * 1000)) * 10
+    const totalMinutes = Math.round(ms / (10 * 60 * 1000)) * 10
     if (totalMinutes < 60) return `${totalMinutes}min`
     const hours = Math.floor(totalMinutes / 60)
     const mins = totalMinutes % 60
     return mins > 0 ? `${hours}h${String(mins).padStart(2, '0')}` : `${hours}h`
+}
+
+/**
+ * Format a recent burn rate time delta for display in tooltips.
+ * When maxMs is provided and the formatted delta differs from the formatted max,
+ * shows "delta/max" (e.g. "2h/24h", "10min/1h").
+ *
+ * @param {number|null} deltaMs - Time span in milliseconds
+ * @param {boolean} roundToHour - If true, round to nearest hour (for 7d window).
+ *                                 If false, round to nearest 10 minutes (for 5h window).
+ * @param {number|null} [maxMs] - Maximum lookback duration in milliseconds
+ * @returns {string|null} Formatted duration, e.g. "2h/24h", "50min", "1h", or null
+ */
+export function formatRecentDelta(deltaMs, roundToHour, maxMs) {
+    if (deltaMs == null || deltaMs <= 0) return null
+
+    const deltaStr = formatDuration(deltaMs, roundToHour)
+
+    if (maxMs != null && maxMs > 0) {
+        const maxStr = formatDuration(maxMs, roundToHour)
+        if (deltaStr !== maxStr) {
+            return `${deltaStr}/${maxStr}`
+        }
+    }
+
+    return deltaStr
 }
 
 /**
