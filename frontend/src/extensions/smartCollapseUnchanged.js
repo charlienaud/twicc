@@ -283,6 +283,9 @@ const baseStyles = EditorView.baseTheme({
     // Override native cursor: pointer on the whole container; only action spans are clickable
     '.cm-collapsedLines': {
         cursor: 'default',
+        display: 'flex',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
     },
     '.cm-collapsedLines .cm-collapsedLines-action': {
         cursor: 'pointer',
