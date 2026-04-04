@@ -8,12 +8,21 @@ const props = defineProps({
         type: String,
         required: true,
     },
+    useDirectoryForUnnamed: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const store = useDataStore()
 
 const project = computed(() => store.getProject(props.projectId))
-const displayName = computed(() => store.getProjectDisplayName(props.projectId))
+const displayName = computed(() => {
+    if (props.useDirectoryForUnnamed && project.value && !project.value.name) {
+        return project.value.directory || store.getProjectDisplayName(props.projectId)
+    }
+    return store.getProjectDisplayName(props.projectId)
+})
 const color = computed(() => project.value?.color || null)
 </script>
 

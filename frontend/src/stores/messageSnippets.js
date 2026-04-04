@@ -39,23 +39,44 @@ export const useMessageSnippetsStore = defineStore('messageSnippets', {
 
         /**
          * Get all snippet scopes that have entries, for the manage dialog.
-         * Returns array of { scope, snippets } sorted: global first, then projects alphabetically.
-         * @returns {Array<{ scope: string, snippets: Array }>}
+         * Returns a function (currentProjectId, orderedProjectIds) => Array of { scope, snippets }.
+         * Order: global first, then current project, then other projects in orderedProjectIds order,
+         * then any remaining scopes not covered (e.g. archived/stale projects still having snippets).
+         * @returns {Function} (currentProjectId: string|null, orderedProjectIds: string[]) => Array<{ scope: string, snippets: Array }>
          */
-        allSnippetScopes: (state) => {
+        allSnippetScopes: (state) => (currentProjectId, orderedProjectIds) => {
             const result = []
-            // Global first (only if it has snippets)
-            const global = state.snippets.global || []
-            if (global.length > 0) {
-                result.push({ scope: 'global', snippets: global })
+            const currentScope = currentProjectId ? `project:${currentProjectId}` : null
+
+            // 1. Global first (only if it has snippets)
+            if ((state.snippets.global || []).length > 0) {
+                result.push({ scope: 'global', snippets: state.snippets.global })
             }
-            // Project scopes (only those with snippets)
-            const projectScopes = Object.keys(state.snippets)
-                .filter(k => k.startsWith('project:') && state.snippets[k]?.length > 0)
-                .sort()
-            for (const scope of projectScopes) {
+
+            // 2. Current project (if it has snippets)
+            if (currentScope && state.snippets[currentScope]?.length > 0) {
+                result.push({ scope: currentScope, snippets: state.snippets[currentScope] })
+            }
+
+            // 3. Other projects in the provided order (skip current project)
+            const handledScopes = new Set(result.map(r => r.scope))
+            for (const pid of orderedProjectIds) {
+                if (pid === currentProjectId) continue
+                const scope = `project:${pid}`
+                if (state.snippets[scope]?.length > 0 && !handledScopes.has(scope)) {
+                    result.push({ scope, snippets: state.snippets[scope] })
+                    handledScopes.add(scope)
+                }
+            }
+
+            // 4. Fallback: any remaining scopes not covered (e.g. archived/stale projects with snippets)
+            for (const scope of Object.keys(state.snippets)) {
+                if (!scope.startsWith('project:')) continue
+                if (!state.snippets[scope]?.length) continue
+                if (handledScopes.has(scope)) continue
                 result.push({ scope, snippets: state.snippets[scope] })
             }
+
             return result
         },
     },

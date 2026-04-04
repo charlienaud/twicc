@@ -59,6 +59,23 @@ const unnamedFlatTree = computed(() => {
     return flattenProjectTree(roots)
 })
 
+/**
+ * Project IDs in display order: named projects by mtime desc, then unnamed sorted by directory.
+ * Used to order scope groups in the list view.
+ */
+const orderedProjectIds = computed(() => [
+    ...namedProjects.value.map(p => p.id),
+    ...activeProjects.value
+        .filter(p => p.name === null)
+        .sort((a, b) => (a.directory || '').localeCompare(b.directory || ''))
+        .map(p => p.id),
+])
+
+/** Ordered snippet scopes for the list view. */
+const snippetScopes = computed(() =>
+    terminalConfigStore.allSnippetScopes(props.currentProjectId, orderedProjectIds.value)
+)
+
 /** Color of the currently selected project scope (for the dot in the closed select). */
 const selectedScopeProjectColor = computed(() => {
     if (!formData.value || formData.value.scope === 'global') return null
@@ -249,7 +266,7 @@ defineExpose({ open, close })
         <!-- ═══ LIST VIEW ═══ -->
         <div v-if="view === 'list'" class="dialog-content">
             <div
-                v-for="(group, groupIndex) in terminalConfigStore.allSnippetScopes"
+                v-for="(group, groupIndex) in snippetScopes"
                 :key="group.scope"
                 class="scope-group"
             >
@@ -259,7 +276,7 @@ defineExpose({ open, close })
                 <!-- Group header -->
                 <div class="group-header">
                     <span v-if="group.scope === 'global'" class="group-header-global">All projects</span>
-                    <ProjectBadge v-else :project-id="projectIdFromScope(group.scope)" />
+                    <ProjectBadge v-else :project-id="projectIdFromScope(group.scope)" use-directory-for-unnamed />
                 </div>
 
                 <!-- Snippets in this group -->
@@ -313,7 +330,7 @@ defineExpose({ open, close })
             </div>
 
             <!-- Show message when there are no scopes at all (edge case) -->
-            <div v-if="terminalConfigStore.allSnippetScopes.length === 0" class="empty-message">
+            <div v-if="snippetScopes.length === 0" class="empty-message">
                 No snippets yet. Add one to get started.
             </div>
         </div>
