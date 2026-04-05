@@ -247,13 +247,14 @@ When the user asks to make a new release, follow these steps in order:
 
    {changelog content for this version}"
    ```
+   **Image URLs:** If the changelog contains relative image paths (e.g., `frontend/public/whats-new/...`), replace them with absolute URLs in the tag message by prefixing with `https://raw.githubusercontent.com/twidi/twicc/main/`. Do **not** modify `CHANGELOG.md` itself.
 
 9. **Push** commit and tag:
    ```bash
    git push && git push --tags
    ```
 
-10. **Create GitHub Release** using the same changelog content:
+10. **Create GitHub Release** using the same changelog content (with the same absolute image URLs as the tag):
     ```bash
     gh release create v{version} --title "v{version}" --notes "{changelog content}"
     ```
