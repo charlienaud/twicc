@@ -2,38 +2,77 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Some entries include illustrative screenshots in nested sub-lists.
 
 ## [Unreleased]
 
 ### Added
 
 - Unread sessions: eye icon (orange) marks sessions with new assistant content you haven't seen yet, visible in the session list and aggregated at the project level
+  - ![Unread sessions with eye icon and toaster notification](frontend/public/whats-new/v1.3/unread-state-and-toaster.webp)
 - Message history picker: type `!` at start of input or press PageUp on the first line to browse and reuse previous messages from the current session
+  - ![Message history picker](frontend/public/whats-new/v1.3/message-history-picker.webp)
 - Message input snippets: reusable text snippets with placeholder support, scoped globally or per-project, synced across devices
+  - ![Message snippets configuration](frontend/public/whats-new/v1.3/message-snippets-1.webp)
+  - ![Message snippets editing](frontend/public/whats-new/v1.3/message-snippets-2.webp)
+  - ![Message snippets insertion](frontend/public/whats-new/v1.3/message-snippets-3.webp)
 - Allow pining session settings (model, effort level, thinking style...) to the session regardless of default and "always apply" settings
+  - ![Pinned session settings](frontend/public/whats-new/v1.3/session-pin-settings.webp)
 - Inline code comments: click a line number to annotate code, then send formatted comments to Claude via the message input
+  - ![Inline code comments — step 1](frontend/public/whats-new/v1.3/inline-code-comments-1.webp)
+  - ![Inline code comments — step 2](frontend/public/whats-new/v1.3/inline-code-comments-2.webp)
+  - ![Inline code comments — step 3](frontend/public/whats-new/v1.3/inline-code-comments-3.webp)
+  - ![Inline code comments — step 4](frontend/public/whats-new/v1.3/inline-code-comments-4.webp)
+  - ![Inline code comments — step 5](frontend/public/whats-new/v1.3/inline-code-comments-5.webp)
 - Auto-restart sessions with active cron jobs when they die from API errors or crashes (infinite retry with exponential backoff, max 5 min between attempts)
 - Confirmation dialog when stopping or archiving a session that has active cron jobs, warning that crons will be lost
+  - ![Cron jobs confirmation dialog](frontend/public/whats-new/v1.3/cron-stop-dialog.webp)
 - Allow opening multiple terminal sessions simultaneously, with better presets handling
+  - ![Terminal snippet opening in new tab](frontend/public/whats-new/v1.3/terminal-snippet-new-tab.webp)
+  - ![Multiple terminal sessions](frontend/public/whats-new/v1.3/terminal-multiple.webp)
 - Terminal extra keys bar on mobile: tabbed bar (Essentials / More / F-keys) with modifiers (tap = one-shot, double-tap = lock), arrow keys, special characters, paste, and function keys
-- Custom combos & snippets (with placeholders) for terminal: user-defined key combos/sequences (mobile) and text global or project-scoped snippets (mobile & desktop)
+  - ![Terminal keys bar — step 1](frontend/public/whats-new/v1.3/terminal-keysbar-1.webp)
+  - ![Terminal keys bar — step 2](frontend/public/whats-new/v1.3/terminal-keysbar-2.webp)
+  - ![Terminal keys bar — step 3](frontend/public/whats-new/v1.3/terminal-keysbar-3.webp)
+- Custom combos for terminal: user-defined key combos/sequences on mobile
+  - ![Terminal combos — step 1](frontend/public/whats-new/v1.3/terminal-combos-1.webp)
+  - ![Terminal combos — step 2](frontend/public/whats-new/v1.3/terminal-combos-2.webp)
+  - ![Terminal combos — step 3](frontend/public/whats-new/v1.3/terminal-combos-3.webp)
+- Custom snippets (with placeholders) for terminal: text global or project-scoped snippets (mobile & desktop)
+  - ![Terminal snippets configuration](frontend/public/whats-new/v1.3/terminal-snippets-1.webp)
+  - ![Terminal snippets editing](frontend/public/whats-new/v1.3/terminal-snippets-2.webp)
+  - ![Terminal snippets usage](frontend/public/whats-new/v1.3/terminal-snippets-3.webp)
 - Context-aware terminal scroll across all modes (normal, tmux, alternate screen) on both mobile and desktop, including scroll-during-selection with an indexed text buffer for tmux (with some inspiration from a commit by @dguerizec)
+  - ![Terminal scroll/select mode switch on mobile](frontend/public/whats-new/v1.3/terminal-scroll-select-switch-mobile.webp)
 - Terminal action bar with disconnect button, scroll-to-top/bottom buttons, and mobile scroll/select mode toggle with copy button
+  - ![Terminal action bar](frontend/public/whats-new/v1.3/terminal-action-bar.webp)
 - Hover over a session or the Chat tab while dragging files/text for 1s to auto-switch, then drop to attach
 - Terminal Ctrl+C copies selected text to clipboard, ESC cancels selection and returns to bottom
+  - ![Terminal Ctrl+C copy](frontend/public/whats-new/v1.3/terminal-copy.webp)
 - Keyboard shortcuts for tab navigation: Alt+Shift+1-4 (Chat/Files/Git/Terminal), Alt+Shift+←/→ (Left tab/ Right tab), Alt+Shift+↑/↓ (last visited tab)
 - Usage history graphs: "View graph" button in quota tooltips opens a dialog with time-series charts of utilization and burn rate for 5h and 7d quotas
+  - ![Usage quota tooltip with graph button](frontend/public/whats-new/v1.3/usage-graphs-1.webp)
+  - ![Usage history graph dialog](frontend/public/whats-new/v1.3/usage-graphs-2.webp)
 - List main keyboard shortcuts in the settings panel
+  - ![Keyboard shortcuts in settings](frontend/public/whats-new/v1.3/keyboard-shortcuts.webp)
 - Add "View in Files tab" button for Read/Write/Edit tools
+  - ![Edit tool with CodeMirror, diff view, and View in Files tab button](frontend/public/whats-new/v1.3/edit-tool.webp)
 - Display image files (PNG, JPG, GIF, WebP…) in the Files tab instead of "Binary file cannot be displayed", with SVG preview toggle
-- Dynamic favicon: colored dot reflects global session activity (blue for active work, orange for unread content)
+  - ![Image display in Files tab](frontend/public/whats-new/v1.3/files-image-display-1.webp)
+  - ![SVG preview toggle](frontend/public/whats-new/v1.3/files-image-display-2.webp)
+- Dynamic favicon: colored dot with a gentle pulse (1s cycle) reflects global session activity (blue for active work, orange for unread content)
+  - ![Dynamic favicon — active session (blue)](frontend/public/whats-new/v1.3/favicon-blue.webp)
+  - ![Dynamic favicon — unread content (orange)](frontend/public/whats-new/v1.3/favicon-orange.webp)
 
 ### Changed
 
 - Replace Monaco Editor with CodeMirror 6 for code viewing, editing, and diffs — adds mobile support
+  - ![CodeMirror 6 with diff view](frontend/public/whats-new/v1.3/files-codemirror.webp)
 - Better rendering of diffs for Edit and Write tools
+  - ![Auto-open edits setting](frontend/public/whats-new/v1.3/settings-auto-open-edits.webp)
+  - ![Better diff rendering with CodeMirror](frontend/public/whats-new/v1.3/edit-tool.webp)
 - Reorganize the settings panel with a section navigation sidebar
+  - ![Reorganized settings panel](frontend/public/whats-new/v1.3/settings-panel.webp)
 - File tree: typing a letter jumps to the next same-level entry starting with that letter
 - Remove toast notification for 15-minute user inactivity timeout
 - Bump `claude-agent-sdk` from 0.1.48 to 0.1.56 (bundled Claude Code CLI: 2.1.71 → 2.1.92)
@@ -46,6 +85,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Search overlay now pre-selects the current project filter when not in "All projects" mode
 - Fix "Delete draft" from sidebar menu not navigating back to project home
 - Draft badge now really disappears immediately when sending a message
+- Fix Claude Agent SDK options to make it uses the real Claude Code CLI system prompt preset.
 
 ## [1.2.1] - 2026-03-20
 
