@@ -198,6 +198,12 @@ export function forceNotifySessionViewed(sessionId) {
     if (!sessionId) return
     // Skip if cancelled by mark-unread (e.g. onDeactivated fires after mark-unread navigates away)
     if (__hmrState.cancelledViewedThrottles.has(sessionId)) return
+    // Cancel any pending trailing throttle call to prevent a stale session_viewed
+    // from firing after the user has left this session. Deleting from the Map
+    // prevents reuse, and adding to the cancel Set ensures the trailing callback
+    // (whose timer is still alive inside useThrottleFn) is skipped when it fires.
+    __hmrState.throttledViewedNotifications.delete(sessionId)
+    __hmrState.cancelledViewedThrottles.add(sessionId)
     _sendSessionViewed(sessionId)
 }
 
