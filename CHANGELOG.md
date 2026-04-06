@@ -54,6 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Usage history graphs: "View graph" button in quota tooltips opens a dialog with time-series charts of utilization and burn rate for 5h and 7d quotas
   - ![Usage quota tooltip with graph button](frontend/public/whats-new/v1.3/usage-graphs-1.webp)
   - ![Usage history graph dialog](frontend/public/whats-new/v1.3/usage-graphs-2.webp)
+- Auto-show the "What's New" dialog on first visit after upgrading to a new version
+  - ![What's New dialog after upgrade](frontend/public/whats-new/v1.3/whatsnew.webp)
 - List main keyboard shortcuts in the settings panel
   - ![Keyboard shortcuts in settings](frontend/public/whats-new/v1.3/keyboard-shortcuts.webp)
 - Add "View in Files tab" button for Read/Write/Edit tools
