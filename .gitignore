@@ -239,6 +239,12 @@ logs/
 # Git worktrees
 .worktrees/
 
+# TwiCC config files (synced settings, stored in data dir — appear in worktrees)
+settings.json
+terminal-config.json
+message-snippets.json
+workspaces.json
+
 # Agent local files
 CLAUDE.local.md
 /.claude/
