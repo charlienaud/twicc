@@ -21,6 +21,11 @@ const props = defineProps({
         type: String,
         required: true,
     },
+    /** Optional list of project IDs to aggregate (e.g. workspace projects). Overrides projectId for the API call. */
+    projectIds: {
+        type: Array,
+        default: null,
+    },
 })
 
 const dailyActivity = ref([])
@@ -118,9 +123,14 @@ function onSeparateLabelClick() {
 
 async function fetchDailyActivity() {
     try {
-        const url = props.projectId === ALL_PROJECTS_ID
-            ? '/api/daily-activity/'
-            : `/api/projects/${encodeURIComponent(props.projectId)}/daily-activity/`
+        let url
+        if (props.projectIds) {
+            url = `/api/daily-activity/?project_ids=${props.projectIds.map(encodeURIComponent).join(',')}`
+        } else if (props.projectId === ALL_PROJECTS_ID) {
+            url = '/api/daily-activity/'
+        } else {
+            url = `/api/projects/${encodeURIComponent(props.projectId)}/daily-activity/`
+        }
 
         const res = await apiFetch(url)
         if (res.ok) {
@@ -142,6 +152,7 @@ async function fetchDailyActivity() {
 
 onMounted(fetchDailyActivity)
 watch(() => props.projectId, fetchDailyActivity)
+watch(() => props.projectIds, fetchDailyActivity)
 
 // Poll daily activity during startup so charts update as sessions are indexed
 useStartupPolling(fetchDailyActivity)

@@ -29,12 +29,13 @@ from twicc.core.serializers import (
 SESSIONS_PAGE_SIZE = 1000
 
 
-def _get_sessions_page(project_id: str | None, before_mtime: str | None) -> dict:
+def _get_sessions_page(project_id: str | None, before_mtime: str | None, project_id_list: list[str] | None = None) -> dict:
     """Get a page of sessions with pagination support.
 
     Args:
         project_id: Project ID to filter by, or None for all projects.
         before_mtime: Cursor for pagination - only return sessions with mtime < this value.
+        project_id_list: List of project IDs to filter by (used when project_id is None).
 
     Returns:
         Dict with "sessions" (list) and "has_more" (bool).
@@ -43,6 +44,8 @@ def _get_sessions_page(project_id: str | None, before_mtime: str | None) -> dict
 
     if project_id is not None:
         sessions = sessions.filter(project_id=project_id)
+    elif project_id_list is not None:
+        sessions = sessions.filter(project_id__in=project_id_list)
 
     if before_mtime:
         sessions = sessions.filter(mtime__lt=float(before_mtime))
@@ -66,9 +69,12 @@ def all_sessions(request):
 
     Query params (optional):
         before_mtime: Cursor for pagination - only return sessions older than this mtime.
+        project_ids: Comma-separated list of project IDs to filter by.
     """
     before_mtime = request.GET.get("before_mtime")
-    return JsonResponse(_get_sessions_page(None, before_mtime))
+    project_ids_param = request.GET.get("project_ids")
+    project_id_list = project_ids_param.split(",") if project_ids_param else None
+    return JsonResponse(_get_sessions_page(None, before_mtime, project_id_list=project_id_list))
 
 
 def project_list(request):
@@ -184,8 +190,29 @@ def project_detail(request, project_id):
             project.name = name
         if "color" in data:
             project.color = data["color"]
+        if "archived" in data:
+            archived = data["archived"]
+            if not isinstance(archived, bool):
+                return JsonResponse({"error": "archived must be a boolean"}, status=400)
+            project.archived = archived
 
-        project.save(update_fields=["name", "color"])
+        update_fields = ["name", "color", "archived"]
+        project.save(update_fields=update_fields)
+
+        # Broadcast project_updated via WebSocket
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            "updates",
+            {
+                "type": "broadcast",
+                "data": {
+                    "type": "project_updated",
+                    "project": serialize_project(project),
+                },
+            },
+        )
 
     elif request.method == "PATCH":
         try:
@@ -1172,6 +1199,10 @@ def daily_activity(request, project_id=None):
     If project_id is provided, returns per-project data.
     If project_id is omitted, returns global data (all projects).
 
+    Query params (optional, only for /api/daily-activity/):
+        project_ids: Comma-separated list of project IDs to filter by (e.g. workspace projects).
+                     When provided, aggregates activity across the specified projects.
+
     Returns:
         {
             "daily_activity": [ { "date": "YYYY-MM-DD", "user_message_count": N, "session_count": N, "cost": "X.XX" }, ... ],
@@ -1183,13 +1214,26 @@ def daily_activity(request, project_id=None):
     today = timezone.now().date()
     cutoff = today - timedelta(days=_DAILY_ACTIVITY_MAX_DAYS - 1)
 
-    project_filters = {"project_id": project_id} if project_id else {"project__isnull": True}
+    # Determine filtering: specific project, set of projects (workspace), or global
+    project_ids_param = request.GET.get("project_ids") if not project_id else None
+    if project_id:
+        project_filters = {"project_id": project_id}
+    elif project_ids_param:
+        project_filters = {"project_id__in": project_ids_param.split(",")}
+    else:
+        project_filters = {"project__isnull": True}
 
-    rows = (
-        DailyActivity.objects.filter(date__gte=cutoff, **project_filters)
-        .order_by("date")
-        .values("date", "user_message_count", "session_count", "cost")
-    )
+    qs = DailyActivity.objects.filter(date__gte=cutoff, **project_filters)
+
+    # When filtering by multiple projects, aggregate per date
+    if project_ids_param:
+        rows = qs.values("date").annotate(
+            user_message_count=Sum("user_message_count"),
+            session_count=Sum("session_count"),
+            cost=Sum("cost"),
+        ).order_by("date")
+    else:
+        rows = qs.order_by("date").values("date", "user_message_count", "session_count", "cost")
 
     # All-time totals (no date filter)
     totals = DailyActivity.objects.filter(**project_filters).aggregate(

@@ -3,17 +3,20 @@ import { computed, ref, watch, onMounted, onUnmounted, onBeforeUnmount, provide,
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
+import { useWorkspacesStore } from '../stores/workspaces'
 import { THEME_MODE } from '../constants'
 import { useCommandRegistry } from '../composables/useCommandRegistry'
 import { useStartupPolling } from '../composables/useStartupPolling'
+import { toWorkspaceProjectId } from '../utils/workspaceIds'
+import { splitProjectsByPriority } from '../utils/projectSort'
 import SessionList from '../components/SessionList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
 import ProjectBadge from '../components/ProjectBadge.vue'
-import ProjectSelectOptions from '../components/ProjectSelectOptions.vue'
 import ProjectDetailPanel from '../components/ProjectDetailPanel.vue'
 import SessionRenameDialog from '../components/SessionRenameDialog.vue'
 import ProjectEditDialog from '../components/ProjectEditDialog.vue'
+import WorkspaceManageDialog from '../components/WorkspaceManageDialog.vue'
 import { getUsageRingColor, formatRecentDelta } from '../utils/usage'
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree'
 import CostDisplay from '../components/CostDisplay.vue'
@@ -180,10 +183,26 @@ const sessionId = computed(() => route.params.sessionId || null)
 // Detect "All Projects" mode from route name
 const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
 
-// Effective project ID for store operations
-const effectiveProjectId = computed(() =>
-    isAllProjectsMode.value ? ALL_PROJECTS_ID : projectId.value
+// Workspace state
+const workspacesStore = useWorkspacesStore()
+const activeWorkspaceId = computed(() => route.query.workspace || null)
+const activeWorkspace = computed(() =>
+    activeWorkspaceId.value ? workspacesStore.getWorkspaceById(activeWorkspaceId.value) : null
 )
+const isWorkspaceMode = computed(() => isAllProjectsMode.value && !!activeWorkspaceId.value)
+const workspaceVisibleProjectIds = computed(() =>
+    activeWorkspaceId.value ? workspacesStore.getVisibleProjectIds(activeWorkspaceId.value) : []
+)
+const activeWsLabel = computed(() =>
+    activeWorkspace.value ? `${activeWorkspace.value.name} projects` : null
+)
+
+// Effective project ID for store operations
+const effectiveProjectId = computed(() => {
+    if (!isAllProjectsMode.value) return projectId.value
+    if (activeWorkspaceId.value) return toWorkspaceProjectId(activeWorkspaceId.value)
+    return ALL_PROJECTS_ID
+})
 
 // All projects for the selector (already sorted by mtime desc in store)
 const allProjects = computed(() =>
@@ -199,6 +218,54 @@ const nonStaleFlatTree = computed(() => {
     const roots = buildProjectTree(unnamed)
     return flattenProjectTree(roots)
 })
+
+// Workspace-first split for "New session" dropdowns.
+// When a workspace is active, workspace projects appear first, then others after a divider.
+const wsVisibleSet = computed(() =>
+    activeWorkspaceId.value ? new Set(workspaceVisibleProjectIds.value) : null
+)
+const wsPriorityIds = computed(() =>
+    activeWorkspace.value ? activeWorkspace.value.projectIds : null
+)
+const splitNamedProjects = computed(() =>
+    splitProjectsByPriority(nonStaleNamedProjects.value, wsPriorityIds.value, wsVisibleSet.value)
+)
+const splitFlatTree = computed(() => {
+    const unnamed = nonStaleProjects.value.filter(p => p.name === null)
+    if (!wsPriorityIds.value) {
+        return { prioritized: [], others: flattenProjectTree(buildProjectTree(unnamed)) }
+    }
+    const { prioritized: priProjects, others: otherProjects } = splitProjectsByPriority(unnamed, wsPriorityIds.value, wsVisibleSet.value)
+    return {
+        prioritized: flattenProjectTree(buildProjectTree(priProjects)),
+        others: flattenProjectTree(buildProjectTree(otherProjects)),
+    }
+})
+
+// Projects not in the active workspace (for the "other" section in the dropdown)
+const otherProjectsOutsideWorkspace = computed(() => {
+    if (!activeWorkspaceId.value) return []
+    const wsSet = new Set(workspaceVisibleProjectIds.value)
+    return allProjects.value.filter(p => !wsSet.has(p.id))
+})
+
+// Named/unnamed split for the sidebar project selector dropdown (all projects, or "other" projects when workspace active)
+const selectorNamedProjects = computed(() =>
+    allProjects.value.filter(p => p.name !== null)
+)
+const selectorFlatTree = computed(() => {
+    const unnamed = allProjects.value.filter(p => p.name === null)
+    return flattenProjectTree(buildProjectTree(unnamed))
+})
+const otherNamedProjects = computed(() =>
+    otherProjectsOutsideWorkspace.value.filter(p => p.name !== null)
+)
+const otherFlatTree = computed(() => {
+    const unnamed = otherProjectsOutsideWorkspace.value.filter(p => p.name === null)
+    if (!unnamed.length) return []
+    return flattenProjectTree(buildProjectTree(unnamed))
+})
+
 // Whether the current project (single-project mode) is stale
 const isCurrentProjectStale = computed(() => {
     if (isAllProjectsMode.value) return false
@@ -309,32 +376,48 @@ function handleSessionOptionsSelect(event) {
     }
 }
 
-// Handle project change from selector
-function handleProjectChange(event) {
-    const newProjectId = event.target.value
-    if (newProjectId === ALL_PROJECTS_ID) {
-        // If we have a session selected, keep it in "All Projects" mode
+// Handle project/workspace selection from the dropdown selector
+function handleSelectorSelect(event) {
+    const value = event.detail?.item?.value
+    if (!value) return
+
+    if (value === ALL_PROJECTS_ID) {
+        // Clear workspace, go to all projects. Preserve session/sub-route if one is open.
         if (sessionId.value && projectId.value) {
-            const subagentId = route.params.subagentId
-            if (subagentId) {
-                router.push({ name: 'projects-session-subagent', params: { projectId: projectId.value, sessionId: sessionId.value, subagentId } })
-            } else {
-                router.push({ name: 'projects-session', params: { projectId: projectId.value, sessionId: sessionId.value } })
+            // Map single-project route names to all-projects equivalents
+            let targetName = route.name
+            if (!targetName.startsWith('projects-')) {
+                targetName = 'projects-' + targetName
             }
+            // Use workspace: '' to explicitly signal "no workspace" — the navigation guard
+            // won't re-propagate because '' !== undefined. afterEach cleans the URL.
+            router.push({ name: targetName, params: route.params, query: { workspace: '' } })
         } else {
-            router.push({ name: 'projects-all' })
+            router.push({ name: 'projects-all', query: {} })
         }
-    } else if (newProjectId && newProjectId !== effectiveProjectId.value) {
-        // If we have a session selected that belongs to this project, keep it
-        if (sessionId.value && projectId.value === newProjectId) {
-            const subagentId = route.params.subagentId
-            if (subagentId) {
-                router.push({ name: 'session-subagent', params: { projectId: newProjectId, sessionId: sessionId.value, subagentId } })
+    } else if (value.startsWith('workspace:')) {
+        const wsId = value.slice('workspace:'.length)
+        if (sessionId.value && projectId.value) {
+            const ws = workspacesStore.getWorkspaceById(wsId)
+            if (ws?.projectIds.includes(projectId.value)) {
+                router.push({ name: 'projects-session', params: { projectId: projectId.value, sessionId: sessionId.value }, query: { workspace: wsId } })
             } else {
-                router.push({ name: 'session', params: { projectId: newProjectId, sessionId: sessionId.value } })
+                router.push({ name: 'projects-all', query: { workspace: wsId } })
             }
         } else {
-            router.push({ name: 'project', params: { projectId: newProjectId } })
+            router.push({ name: 'projects-all', query: { workspace: wsId } })
+        }
+    } else if (value === '__manage_workspaces__') {
+        manageWorkspacesDialogRef.value?.open()
+    } else if (value === 'ws-all') {
+        router.push({ name: 'projects-all', query: { workspace: activeWorkspaceId.value } })
+    } else {
+        // Regular project selection — navigation guard handles workspace propagation
+        const targetProjectId = value
+        if (sessionId.value && projectId.value === targetProjectId) {
+            router.push({ name: 'session', params: { projectId: targetProjectId, sessionId: sessionId.value } })
+        } else {
+            router.push({ name: 'project', params: { projectId: targetProjectId } })
         }
     }
 }
@@ -342,9 +425,9 @@ function handleProjectChange(event) {
 // Handle session selection (toggle: clicking already-selected session deselects it)
 function handleSessionSelect(session) {
     if (session.id === sessionId.value) {
-        // Deselect: navigate back to project root
+        // Deselect: navigate back to project root (keep workspace if active)
         if (isAllProjectsMode.value) {
-            router.push({ name: 'projects-all' })
+            router.push({ name: 'projects-all', query: activeWorkspaceId.value ? { workspace: activeWorkspaceId.value } : {} })
         } else {
             router.push({ name: 'project', params: { projectId: projectId.value } })
         }
@@ -401,6 +484,9 @@ function handleNewSession(targetProjectId = null) {
 
 // Create project from the "New session" dropdown
 const createProjectDialogRef = ref(null)
+
+// Workspace management dialog
+const manageWorkspacesDialogRef = ref(null)
 
 function handleNewSessionSelect(e) {
     const value = e.detail.item.value
@@ -525,6 +611,23 @@ watch(currentSessionArchived, (archived) => {
     }
 }, { immediate: true })
 
+// Redirect away from workspace if it becomes non-activable, archived (when hidden), or deleted
+watch(
+    [activeWorkspaceId, () => workspacesStore.workspaces, () => settingsStore.isShowArchivedWorkspaces, () => settingsStore.isShowArchivedProjects],
+    () => {
+        if (!activeWorkspaceId.value) return
+        const ws = workspacesStore.getWorkspaceById(activeWorkspaceId.value)
+        const shouldClear = (
+            !ws ||
+            !workspacesStore.isActivable(ws.id) ||
+            (ws.archived && !settingsStore.isShowArchivedWorkspaces)
+        )
+        if (shouldClear) {
+            router.replace({ name: 'projects-all', query: {} })
+        }
+    }
+)
+
 // On mobile, close sidebar when session changes
 watch(sessionId, (newSessionId) => {
     if (!newSessionId) return
@@ -623,18 +726,32 @@ onMounted(() => {
         },
     ])
 
-    // Listen for the custom event to open the new project dialog
+    // Listen for custom events to open dialogs (triggered by command palette)
     window.addEventListener('twicc:open-new-project-dialog', openNewProjectDialog)
+    window.addEventListener('twicc:open-new-workspace-dialog', openNewWorkspaceDialog)
+    window.addEventListener('twicc:open-manage-workspaces-dialog', openManageWorkspacesDialog)
+    window.addEventListener('twicc:open-edit-workspace-dialog', openEditWorkspaceDialog)
 })
 
-// Open the new project dialog (triggered by command palette custom event)
 function openNewProjectDialog() {
     createProjectDialogRef.value?.open()
+}
+function openNewWorkspaceDialog() {
+    manageWorkspacesDialogRef.value?.openNew()
+}
+function openManageWorkspacesDialog() {
+    manageWorkspacesDialogRef.value?.open()
+}
+function openEditWorkspaceDialog(e) {
+    manageWorkspacesDialogRef.value?.openForWorkspace(e.detail?.workspaceId)
 }
 
 onBeforeUnmount(() => {
     unregisterCommands(['ui.toggle-sidebar', 'ui.focus-search'])
     window.removeEventListener('twicc:open-new-project-dialog', openNewProjectDialog)
+    window.removeEventListener('twicc:open-new-workspace-dialog', openNewWorkspaceDialog)
+    window.removeEventListener('twicc:open-manage-workspaces-dialog', openManageWorkspacesDialog)
+    window.removeEventListener('twicc:open-edit-workspace-dialog', openEditWorkspaceDialog)
 })
 
 // Guard flag to ignore reposition events triggered by width restore after auto-collapse
@@ -753,25 +870,175 @@ function updateSidebarClosedClass(closed) {
                         <wa-icon name="arrow-left"></wa-icon>
                     </wa-button>
                     <AppTooltip for="back-button">Back to projects list</AppTooltip>
-                    <wa-select
+                    <wa-dropdown
                         id="project-selector"
-                        :value.attr="isAllProjectsMode ? ALL_PROJECTS_ID : projectId"
-                        @change="handleProjectChange"
                         class="project-selector"
-                        size="small"
+                        @wa-select="handleSelectorSelect"
                     >
-                        <span
-                            v-if="!isAllProjectsMode"
-                            slot="start"
-                            class="selected-project-dot"
-                            :style="selectedProjectColor ? { '--dot-color': selectedProjectColor } : null"
-                        ></span>
-                        <wa-option :value="ALL_PROJECTS_ID">
-                            All Projects
-                        </wa-option>
-                        <wa-divider v-if="allProjects.length"></wa-divider>
-                        <ProjectSelectOptions :projects="allProjects" show-process-indicator />
-                    </wa-select>
+                        <wa-button
+                            slot="trigger"
+                            variant="brand"
+                            appearance="outlined"
+                            size="small"
+                            class="project-selector-trigger"
+                        >
+                            <span v-if="!isAllProjectsMode" class="selected-project-dot" :style="selectedProjectColor ? { '--dot-color': selectedProjectColor } : null"></span>
+                            <span v-if="isWorkspaceMode" class="project-selector-label"><wa-icon name="layer-group" auto-width :style="activeWorkspace?.color ? { color: activeWorkspace.color } : null"></wa-icon> {{ activeWorkspace?.name }}</span>
+                            <span v-else-if="isAllProjectsMode" class="project-selector-label">All Projects</span>
+                            <span v-else class="project-selector-label">{{ store.getProjectDisplayName(projectId) }}</span>
+
+                            <wa-icon slot="end" name="chevron-down" class="project-selector-caret"></wa-icon>
+                        </wa-button>
+
+                        <!-- When no workspace is active -->
+                        <template v-if="!activeWorkspaceId">
+                            <wa-dropdown-item :value="ALL_PROJECTS_ID">
+                                <wa-icon slot="icon" name="check" :style="{ visibility: isAllProjectsMode ? 'visible' : 'hidden' }"></wa-icon>
+                                All Projects
+                            </wa-dropdown-item>
+
+                            <template v-if="workspacesStore.getSelectableWorkspaces.length">
+                                <wa-divider></wa-divider>
+                                <wa-dropdown-item disabled class="section-header-item">
+                                    <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
+                                    Workspaces
+                                </wa-dropdown-item>
+                                <wa-dropdown-item
+                                    v-for="ws in workspacesStore.getSelectableWorkspaces"
+                                    :key="ws.id"
+                                    :value="'workspace:' + ws.id"
+                                >
+                                    <wa-icon slot="icon" name="layer-group" :style="ws.color ? { color: ws.color } : null"></wa-icon>
+                                    {{ ws.name }}
+                                </wa-dropdown-item>
+                                <wa-dropdown-item value="__manage_workspaces__">
+                                    <wa-icon slot="icon" name="gear"></wa-icon>
+                                    Manage workspaces...
+                                </wa-dropdown-item>
+                            </template>
+
+                            <!-- Named projects -->
+                            <wa-divider v-if="selectorNamedProjects.length"></wa-divider>
+                            <wa-dropdown-item
+                                v-for="p in selectorNamedProjects"
+                                :key="p.id"
+                                :value="p.id"
+                            >
+                                <wa-icon slot="icon" name="check" :style="{ visibility: !isAllProjectsMode && projectId === p.id ? 'visible' : 'hidden' }"></wa-icon>
+                                <ProjectBadge :project-id="p.id" />
+                            </wa-dropdown-item>
+
+                            <!-- Unnamed projects (directory tree) -->
+                            <wa-divider v-if="selectorFlatTree.length"></wa-divider>
+                            <template v-for="item in selectorFlatTree" :key="item.key">
+                                <wa-dropdown-item
+                                    v-if="item.isFolder"
+                                    disabled
+                                    class="tree-folder-dropdown-item"
+                                >
+                                    <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
+                                    <span class="tree-folder-label" :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                        {{ item.segment }}
+                                    </span>
+                                </wa-dropdown-item>
+                                <wa-dropdown-item
+                                    v-else
+                                    :value="item.project.id"
+                                >
+                                    <wa-icon slot="icon" name="check" :style="{ visibility: !isAllProjectsMode && projectId === item.project.id ? 'visible' : 'hidden' }"></wa-icon>
+                                    <span :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                        <ProjectBadge :project-id="item.project.id" />
+                                    </span>
+                                </wa-dropdown-item>
+                            </template>
+                        </template>
+
+                        <!-- When a workspace is active -->
+                        <template v-else>
+                            <wa-dropdown-item :value="ALL_PROJECTS_ID">
+                                <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
+                                All Projects
+                            </wa-dropdown-item>
+
+                            <wa-divider></wa-divider>
+                            <wa-dropdown-item disabled class="section-header-item">
+                                <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
+                                Workspaces
+                            </wa-dropdown-item>
+                            <wa-dropdown-item
+                                v-for="ws in workspacesStore.getSelectableWorkspaces"
+                                :key="ws.id"
+                                :value="'workspace:' + ws.id"
+                            >
+                                <wa-icon slot="icon" :name="ws.id === activeWorkspaceId ? 'check' : 'layer-group'" :style="ws.id !== activeWorkspaceId && ws.color ? { color: ws.color } : null"></wa-icon>
+                                {{ ws.name }}
+                            </wa-dropdown-item>
+                            <wa-dropdown-item value="__manage_workspaces__">
+                                <wa-icon slot="icon" name="gear"></wa-icon>
+                                Manage workspaces...
+                            </wa-dropdown-item>
+
+                            <wa-divider></wa-divider>
+                            <!-- Workspace projects sub-section -->
+                            <wa-dropdown-item disabled class="section-header-item">
+                                <wa-icon slot="icon" name="layer-group" :style="activeWorkspace?.color ? { color: activeWorkspace.color } : null"></wa-icon>
+                                {{ activeWorkspace?.name }} projects
+                            </wa-dropdown-item>
+                            <wa-dropdown-item value="ws-all">
+                                <wa-icon slot="icon" name="check" :style="{ visibility: isAllProjectsMode ? 'visible' : 'hidden' }"></wa-icon>
+                                All projects
+                            </wa-dropdown-item>
+                            <wa-dropdown-item
+                                v-for="pid in workspaceVisibleProjectIds"
+                                :key="pid"
+                                :value="pid"
+                            >
+                                <wa-icon slot="icon" name="check" :style="{ visibility: !isAllProjectsMode && projectId === pid ? 'visible' : 'hidden' }"></wa-icon>
+                                <ProjectBadge :project-id="pid" />
+                            </wa-dropdown-item>
+
+                            <!-- Other projects (not in workspace) -->
+                            <template v-if="otherNamedProjects.length || otherFlatTree.length">
+                                <wa-divider></wa-divider>
+                                <wa-dropdown-item disabled class="section-header-item">
+                                    <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
+                                    Other projects
+                                </wa-dropdown-item>
+                            </template>
+                            <!-- Other named projects -->
+                            <wa-dropdown-item
+                                v-for="p in otherNamedProjects"
+                                :key="p.id"
+                                :value="p.id"
+                            >
+                                <wa-icon slot="icon" name="check" :style="{ visibility: !isAllProjectsMode && projectId === p.id ? 'visible' : 'hidden' }"></wa-icon>
+                                <ProjectBadge :project-id="p.id" />
+                            </wa-dropdown-item>
+                            <!-- Other unnamed projects (directory tree) -->
+                            <wa-divider v-if="otherNamedProjects.length && otherFlatTree.length"></wa-divider>
+                            <template v-for="item in otherFlatTree" :key="item.key">
+                                <wa-dropdown-item
+                                    v-if="item.isFolder"
+                                    disabled
+                                    class="tree-folder-dropdown-item"
+                                >
+                                    <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
+                                    <span class="tree-folder-label" :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                        {{ item.segment }}
+                                    </span>
+                                </wa-dropdown-item>
+                                <wa-dropdown-item
+                                    v-else
+                                    :value="item.project.id"
+                                >
+                                    <wa-icon slot="icon" name="check" :style="{ visibility: !isAllProjectsMode && projectId === item.project.id ? 'visible' : 'hidden' }"></wa-icon>
+                                    <span :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                        <ProjectBadge :project-id="item.project.id" />
+                                    </span>
+                                </wa-dropdown-item>
+                            </template>
+                        </template>
+                    </wa-dropdown>
                 </div>
 
                 <div class="sidebar-header-row">
@@ -857,7 +1124,7 @@ function updateSidebarClosedClass(closed) {
                     ref="sessionListRef"
                     :project-id="effectiveProjectId"
                     :session-id="sessionId"
-                    :show-project-name="isAllProjectsMode"
+                    :show-project-name="isAllProjectsMode && (!activeWorkspace || workspaceVisibleProjectIds.length > 1)"
                     :search-query="searchQuery"
                     :show-archived="showArchivedSessions"
                     :show-archived-projects="showArchivedProjects"
@@ -906,19 +1173,55 @@ function updateSidebarClosedClass(closed) {
                             New project
                         </wa-dropdown-item>
 
-                        <!-- Named projects -->
-                        <wa-divider v-if="nonStaleNamedProjects.length"></wa-divider>
+                        <!-- Workspace projects first (when workspace active) -->
+                        <template v-if="splitNamedProjects.prioritized.length || splitFlatTree.prioritized.length">
+                            <wa-divider></wa-divider>
+                            <wa-dropdown-item v-if="activeWsLabel" disabled class="section-header-item">{{ activeWsLabel }}</wa-dropdown-item>
+                        </template>
                         <wa-dropdown-item
-                            v-for="p in nonStaleNamedProjects"
+                            v-for="p in splitNamedProjects.prioritized"
+                            :key="p.id"
+                            :value="p.id"
+                        >
+                            <ProjectBadge :project-id="p.id" />
+                        </wa-dropdown-item>
+                        <template v-for="item in splitFlatTree.prioritized" :key="'wsp-' + item.key">
+                            <wa-dropdown-item
+                                v-if="item.isFolder"
+                                disabled
+                                class="tree-folder-dropdown-item"
+                            >
+                                <span class="tree-folder-label" :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                    {{ item.segment }}
+                                </span>
+                            </wa-dropdown-item>
+                            <wa-dropdown-item
+                                v-else
+                                :value="item.project.id"
+                            >
+                                <span :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                    <ProjectBadge :project-id="item.project.id" />
+                                </span>
+                            </wa-dropdown-item>
+                        </template>
+
+                        <!-- Other projects -->
+                        <template v-if="activeWsLabel && (splitNamedProjects.others.length || splitFlatTree.others.length)">
+                            <wa-divider></wa-divider>
+                            <wa-dropdown-item disabled class="section-header-item">Other projects</wa-dropdown-item>
+                        </template>
+                        <wa-divider v-else-if="splitNamedProjects.others.length"></wa-divider>
+                        <wa-dropdown-item
+                            v-for="p in splitNamedProjects.others"
                             :key="p.id"
                             :value="p.id"
                         >
                             <ProjectBadge :project-id="p.id" />
                         </wa-dropdown-item>
 
-                        <!-- Unnamed projects (flattened tree) -->
-                        <wa-divider v-if="nonStaleFlatTree.length"></wa-divider>
-                        <template v-for="item in nonStaleFlatTree" :key="item.key">
+                        <!-- Other unnamed projects (flattened tree) -->
+                        <wa-divider v-if="splitFlatTree.others.length"></wa-divider>
+                        <template v-for="item in splitFlatTree.others" :key="item.key">
                             <wa-dropdown-item
                                 v-if="item.isFolder"
                                 disabled
@@ -969,19 +1272,55 @@ function updateSidebarClosedClass(closed) {
                         New project
                     </wa-dropdown-item>
 
-                    <!-- Named projects -->
-                    <wa-divider v-if="nonStaleNamedProjects.length"></wa-divider>
+                    <!-- Workspace projects first (when workspace active) -->
+                    <template v-if="splitNamedProjects.prioritized.length || splitFlatTree.prioritized.length">
+                        <wa-divider></wa-divider>
+                        <wa-dropdown-item v-if="activeWsLabel" disabled class="section-header-item">{{ activeWsLabel }}</wa-dropdown-item>
+                    </template>
                     <wa-dropdown-item
-                        v-for="p in nonStaleNamedProjects"
+                        v-for="p in splitNamedProjects.prioritized"
+                        :key="p.id"
+                        :value="p.id"
+                    >
+                        <ProjectBadge :project-id="p.id" />
+                    </wa-dropdown-item>
+                    <template v-for="item in splitFlatTree.prioritized" :key="'wsp-' + item.key">
+                        <wa-dropdown-item
+                            v-if="item.isFolder"
+                            disabled
+                            class="tree-folder-dropdown-item"
+                        >
+                            <span class="tree-folder-label" :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                {{ item.segment }}
+                            </span>
+                        </wa-dropdown-item>
+                        <wa-dropdown-item
+                            v-else
+                            :value="item.project.id"
+                        >
+                            <span :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                <ProjectBadge :project-id="item.project.id" />
+                            </span>
+                        </wa-dropdown-item>
+                    </template>
+
+                    <!-- Other projects -->
+                    <template v-if="activeWsLabel && (splitNamedProjects.others.length || splitFlatTree.others.length)">
+                        <wa-divider></wa-divider>
+                        <wa-dropdown-item disabled class="section-header-item">Other projects</wa-dropdown-item>
+                    </template>
+                    <wa-divider v-else-if="splitNamedProjects.others.length"></wa-divider>
+                    <wa-dropdown-item
+                        v-for="p in splitNamedProjects.others"
                         :key="p.id"
                         :value="p.id"
                     >
                         <ProjectBadge :project-id="p.id" />
                     </wa-dropdown-item>
 
-                    <!-- Unnamed projects (flattened tree) -->
-                    <wa-divider v-if="nonStaleFlatTree.length"></wa-divider>
-                    <template v-for="item in nonStaleFlatTree" :key="item.key">
+                    <!-- Other unnamed projects (flattened tree) -->
+                    <wa-divider v-if="splitFlatTree.others.length"></wa-divider>
+                    <template v-for="item in splitFlatTree.others" :key="item.key">
                         <wa-dropdown-item
                             v-if="item.isFolder"
                             disabled
@@ -1157,6 +1496,9 @@ function updateSidebarClosedClass(closed) {
 
     <!-- Usage graph dialog -->
     <UsageGraphDialog ref="usageGraphDialogRef" />
+
+    <!-- Workspace management dialog -->
+    <WorkspaceManageDialog ref="manageWorkspacesDialogRef" />
     </div>
 </template>
 
@@ -1251,37 +1593,64 @@ wa-split-panel::part(divider) {
 
 .project-selector {
     flex: 1;
-    /* we allow options to be larger than the width of the select */
-    &::part(listbox) {
-        overflow: visible;
-        overflow-y: auto;
-        max-height: 50dvh;
-        width: max-content;
-    }
-    wa-option {
-        max-width: min(400px, calc(100vw - 100px));
-    }
-    &:hover {
-        z-index: 10;
-        min-width: min(10rem, calc(100vw - 100px));
+    overflow: hidden;
+    display: inline-flex;
+    max-width: min(50rem, calc(100vw - 100px));
+    &::part(menu) {
+       max-width: min(50rem, calc(100vw - 2rem)) !important
     }
 }
-@container sidebar (width <= 13rem) {
+@media (width < 400px) {
     .project-selector {
-        &::part(form-control-input) {
-            xwidth: min-content;
+        &::part(menu) {
+            width: min(50rem, calc(100vw - 2rem)) !important
         }
-        &::part(combobox) {
+    }
+}
+
+
+.project-selector-trigger {
+    width: 100%;
+    background: var(--wa-color-surface-default);
+    &::part(base) {
+        justify-content: space-between;
+    }
+    &::part(start) {
+        display: none;
+    }
+    &::part(label) {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-xs);
+        overflow: hidden;
+    }
+}
+.project-selector {
+    &:hover, &[open] {
+        overflow: visible;
+        .project-selector-trigger {
+            z-index: 11;
+        }
+    }
+}
+
+@container sidebar (width <= 13rem) {
+    .project-selector-trigger {
+        &::part(base) {
             padding-inline: var(--wa-space-xs);
         }
-        &::part(display-input) {
+        .project-selector-caret {
+            margin-inline-start: var(--wa-space-3xs);
         }
-        .selected-project-dot {
-            margin-inline-end: var(--wa-space-xs);
-        }
-        &::part(expand-icon) {
-            margin-inline-start: var(--wa-space-xs);
-        }
+    }
+}
+
+.project-selector-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    & > wa-icon {
+        margin-right: var(--wa-space-2xs);
     }
 }
 
@@ -1299,6 +1668,20 @@ wa-split-panel::part(divider) {
 .tree-folder-dropdown-item {
     opacity: 1;
     cursor: default;
+}
+
+.section-header-item {
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 1;
+    cursor: default;
+    color: var(--wa-color-text-quiet);
+    wa-icon {
+        font-size: var(--wa-font-size-s);
+        color: var(--wa-color-text-normal)
+    }
 }
 
 .tree-folder-label {

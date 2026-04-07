@@ -1,0 +1,136 @@
+import { defineStore } from 'pinia'
+import { useSettingsStore } from './settings'
+import { useDataStore } from './data'
+
+export const useWorkspacesStore = defineStore('workspaces', {
+    state: () => ({
+        workspaces: [],           // Array of { id, name, archived, projectIds: string[] }
+        _isApplyingRemote: false, // Guard to prevent echo on WS receive
+    }),
+
+    getters: {
+        /** All workspaces, in their stored order. */
+        getAllWorkspaces: (state) => state.workspaces,
+
+        /** Get a workspace by its ID. */
+        getWorkspaceById: (state) => (id) =>
+            state.workspaces.find(w => w.id === id) || null,
+
+        /**
+         * Visible project IDs for a given workspace, respecting "show archived projects".
+         * Returns the projects in their custom order, filtered to only visible ones.
+         */
+        getVisibleProjectIds() {
+            return (workspaceId) => {
+                const ws = this.getWorkspaceById(workspaceId)
+                if (!ws) return []
+                const dataStore = useDataStore()
+                const settingsStore = useSettingsStore()
+                const showArchived = settingsStore.isShowArchivedProjects
+                return ws.projectIds.filter(pid => {
+                    const project = dataStore.getProject(pid)
+                    return project && (showArchived || !project.archived)
+                })
+            }
+        },
+
+        /** Whether a workspace is activable (has at least one visible project). */
+        isActivable() {
+            return (workspaceId) => this.getVisibleProjectIds(workspaceId).length > 0
+        },
+
+        /** Non-archived workspaces that are activable. For use in selectors. */
+        getSelectableWorkspaces() {
+            const settingsStore = useSettingsStore()
+            const showArchivedWs = settingsStore.isShowArchivedWorkspaces
+            return this.workspaces.filter(ws =>
+                (showArchivedWs || !ws.archived) && this.isActivable(ws.id)
+            )
+        },
+
+        /** Get all non-archived workspaces that contain a given project ID. */
+        getWorkspacesForProject: (state) => (projectId) =>
+            state.workspaces.filter(ws => !ws.archived && ws.projectIds.includes(projectId)),
+
+        /** Whether any archived workspace exists (to show/hide the toggle). */
+        hasArchivedWorkspaces: (state) => state.workspaces.some(w => w.archived),
+    },
+
+    actions: {
+        /** Apply workspaces received from the backend (WS message). */
+        applyWorkspaces(workspaces) {
+            this._isApplyingRemote = true
+            this.workspaces = workspaces || []
+            this._isApplyingRemote = false
+        },
+
+        /** Send current workspaces to the backend via WebSocket. */
+        async _sendWorkspaces() {
+            if (this._isApplyingRemote) return
+            const { sendWorkspaces } = await import('../composables/useWebSocket')
+            sendWorkspaces(this.workspaces)
+        },
+
+        /** Generate a human-readable workspace ID from the name.
+         *  Keeps alphanumeric, underscores and hyphens; replaces everything else with a hyphen.
+         *  Collapses consecutive hyphens, trims leading/trailing hyphens, lowercases.
+         *  If the resulting ID already exists, appends -2, -3, etc. */
+        _generateId(name) {
+            let base = name
+                .toLowerCase()
+                .replace(/[^a-z0-9_-]/g, '-')
+                .replace(/-{2,}/g, '-')
+                .replace(/^-|-$/g, '')
+            if (!base) base = 'workspace'
+
+            const existingIds = new Set(this.workspaces.map(w => w.id))
+            if (!existingIds.has(base)) return base
+
+            let suffix = 2
+            while (existingIds.has(`${base}-${suffix}`)) suffix++
+            return `${base}-${suffix}`
+        },
+
+        /** Create a new workspace. Returns the new workspace object. */
+        createWorkspace({ name, projectIds = [], archived = false, color = null }) {
+            const trimmedName = name.trim()
+            const ws = {
+                id: this._generateId(trimmedName),
+                name: trimmedName,
+                archived,
+                projectIds,
+                color,
+            }
+            this.workspaces.push(ws)
+            this._sendWorkspaces()
+            return ws
+        },
+
+        /** Update an existing workspace. */
+        updateWorkspace(id, { name, projectIds, archived, color }) {
+            const ws = this.workspaces.find(w => w.id === id)
+            if (!ws) return
+            if (name !== undefined) ws.name = name.trim()
+            if (projectIds !== undefined) ws.projectIds = projectIds
+            if (archived !== undefined) ws.archived = archived
+            if (color !== undefined) ws.color = color
+            this._sendWorkspaces()
+        },
+
+        /** Delete a workspace by ID. */
+        deleteWorkspace(id) {
+            const index = this.workspaces.findIndex(w => w.id === id)
+            if (index === -1) return
+            this.workspaces.splice(index, 1)
+            this._sendWorkspaces()
+        },
+
+        /** Reorder workspaces (move from fromIndex to toIndex). */
+        reorderWorkspace(fromIndex, toIndex) {
+            if (toIndex < 0 || toIndex >= this.workspaces.length) return
+            const [item] = this.workspaces.splice(fromIndex, 1)
+            this.workspaces.splice(toIndex, 0, item)
+            this._sendWorkspaces()
+        },
+    },
+})

@@ -18,6 +18,7 @@ import MessageHistoryPickerPopup from './MessageHistoryPickerPopup.vue'
 import MessageSnippetsBar from './MessageSnippetsBar.vue'
 import MessageSnippetsDialog from './MessageSnippetsDialog.vue'
 import { useMessageSnippetsStore } from '../stores/messageSnippets'
+import { useWorkspacesStore } from '../stores/workspaces'
 import { getUnavailablePlaceholders, resolveSnippetText } from '../utils/snippetPlaceholders'
 
 const props = defineProps({
@@ -1288,7 +1289,7 @@ function handleCancel() {
     store.deleteDraftSession(props.sessionId)
 
     if (isAllProjectsMode.value) {
-        router.push({ name: 'projects-all' })
+        router.push({ name: 'projects-all', query: route.query.workspace ? { workspace: route.query.workspace } : {} })
     } else {
         router.push({ name: 'project', params: { projectId: props.projectId } })
     }
@@ -1442,9 +1443,18 @@ const placeholderContext = computed(() => {
     return { session: s, project, projectName }
 })
 
+/** Workspace IDs for snippet display: active workspace, or all workspaces containing this project. */
+const snippetWorkspaceIds = computed(() => {
+    const wsId = route.query.workspace
+    if (wsId) return [wsId]
+    if (!props.projectId) return []
+    const workspacesStore = useWorkspacesStore()
+    return workspacesStore.getWorkspacesForProject(props.projectId).map(ws => ws.id)
+})
+
 /** Snippets for this project, enriched with _disabled / _disabledReason for unresolvable placeholders. */
 const snippetsForProject = computed(() => {
-    const raw = props.projectId ? messageSnippetsStore.getSnippetsForProject(props.projectId) : []
+    const raw = props.projectId ? messageSnippetsStore.getSnippetsForProject(props.projectId, snippetWorkspaceIds.value) : []
     const ctx = placeholderContext.value
 
     return raw.map(snippet => {

@@ -14,6 +14,7 @@
 import { computed } from 'vue'
 import { useCodeCommentsStore } from '../stores/codeComments'
 import { useDataStore } from '../stores/data'
+import { splitProjectsByPriority } from '../utils/projectSort'
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
@@ -29,23 +30,73 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    /** Ordered array of project IDs to display first (e.g. workspace projects). When provided, these appear before all other projects with a divider. */
+    priorityProjectIds: {
+        type: Array,
+        default: null,
+    },
+    /** Label for the priority section header (e.g. "Sprint 14 projects"). Shown as a disabled option before priority projects. */
+    priorityLabel: {
+        type: String,
+        default: null,
+    },
 })
 
 const store = useDataStore()
 const codeCommentsStore = useCodeCommentsStore()
 
+// When priorityProjectIds is provided, split projects into prioritized (workspace) and others
+const hasPriority = computed(() => props.priorityProjectIds?.length > 0)
+
+const prioritySplit = computed(() => {
+    if (!hasPriority.value) return null
+    return splitProjectsByPriority(props.projects, props.priorityProjectIds)
+})
+
+// Named/unnamed split applies to "others" when priority is active, or all projects otherwise
+const projectsForDefaultSplit = computed(() =>
+    hasPriority.value ? prioritySplit.value.others : props.projects
+)
+
 const namedProjects = computed(() =>
-    props.projects.filter(p => p.name !== null)
+    projectsForDefaultSplit.value.filter(p => p.name !== null)
 )
 
 const flatTree = computed(() => {
-    const unnamed = props.projects.filter(p => p.name === null)
+    const unnamed = projectsForDefaultSplit.value.filter(p => p.name === null)
     const roots = buildProjectTree(unnamed)
     return flattenProjectTree(roots)
 })
 </script>
 
 <template>
+    <!-- Priority projects (workspace) — shown first when priorityProjectIds is provided -->
+    <template v-if="hasPriority">
+        <wa-option v-if="priorityLabel && prioritySplit.prioritized.length" disabled class="section-header-option">
+            {{ priorityLabel }}
+        </wa-option>
+        <wa-option
+            v-for="p in prioritySplit.prioritized"
+            :key="p.id"
+            :value="p.id"
+            :label="store.getProjectDisplayName(p.id)"
+        >
+            <span class="project-option">
+                <ProjectBadge :project-id="p.id" />
+                <span class="project-option-indicators">
+                    <wa-icon v-if="codeCommentsStore.countByProject(p.id) > 0" name="comment" variant="regular" class="code-comments-indicator"></wa-icon>
+                    <ProjectProcessIndicator v-if="showProcessIndicator" :project-id="p.id" size="small" />
+                </span>
+            </span>
+        </wa-option>
+
+        <!-- Divider + "Other projects" header between priority and remaining projects -->
+        <template v-if="prioritySplit.prioritized.length && (namedProjects.length || flatTree.length)">
+            <wa-divider></wa-divider>
+            <wa-option v-if="priorityLabel" disabled class="section-header-option">Other projects</wa-option>
+        </template>
+    </template>
+
     <!-- Named projects -->
     <wa-option
         v-for="p in namedProjects"
@@ -120,5 +171,13 @@ wa-divider {
 .tree-folder-label {
     font-family: var(--wa-font-family-code);
     font-size: var(--wa-font-size-s);
+}
+
+.section-header-option {
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--wa-color-text-quiet);
 }
 </style>

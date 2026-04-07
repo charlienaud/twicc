@@ -266,6 +266,16 @@ export function sendSyncedSettings(settings) {
 }
 
 /**
+ * Send workspaces to the backend for persistence.
+ * The backend will broadcast the updated workspaces to all connected clients.
+ * @param {Array} workspaces - The workspaces array
+ * @returns {boolean} - True if message was sent, false if not connected
+ */
+export function sendWorkspaces(workspaces) {
+    sendWsMessage({ type: 'update_workspaces', workspaces })
+}
+
+/**
  * Send terminal config to the backend for persistence.
  * The backend will broadcast the updated config to all connected clients.
  * @param {Object} config - The terminal config key-value pairs
@@ -735,6 +745,13 @@ export function useWebSocket() {
                 // Lazy import to avoid circular dependency (useWebSocket.js → settings.js)
                 import('../stores/settings').then(({ useSettingsStore }) => {
                     useSettingsStore().applySyncedSettings(msg.settings)
+                })
+                break
+            case 'workspaces_updated':
+                // Apply workspaces from backend (on connect or when another client updates)
+                // Lazy import to avoid circular dependency (useWebSocket.js → workspaces.js)
+                import('../stores/workspaces').then(({ useWorkspacesStore }) => {
+                    useWorkspacesStore().applyWorkspaces(msg.workspaces)
                 })
                 break
             case 'terminal_config_updated':

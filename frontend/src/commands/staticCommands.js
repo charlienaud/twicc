@@ -10,6 +10,7 @@
 import { useCommandRegistry } from '../composables/useCommandRegistry'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
+import { useWorkspacesStore } from '../stores/workspaces'
 import { useRoute } from 'vue-router'
 import {
     DISPLAY_MODE,
@@ -35,6 +36,7 @@ export function initStaticCommands(router) {
     const { registerCommands } = useCommandRegistry()
     const settings = useSettingsStore()
     const data = useDataStore()
+    const workspaces = useWorkspacesStore()
     const route = useRoute()
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -130,6 +132,17 @@ export function initStaticCommands(router) {
             icon: 'layer-group',
             category: 'navigation',
             action: () => router.push({ name: 'projects-all' }),
+        },
+        {
+            id: 'nav.workspace',
+            label: 'Go to Workspace\u2026',
+            icon: 'layer-group',
+            category: 'navigation',
+            items: () => workspaces.getSelectableWorkspaces.map(ws => ({
+                id: ws.id,
+                label: ws.name,
+                action: () => router.push({ name: 'projects-all', query: { workspace: ws.id } }),
+            })),
         },
         {
             id: 'nav.search',
@@ -235,6 +248,15 @@ export function initStaticCommands(router) {
             category: 'creation',
             action: () => {
                 window.dispatchEvent(new CustomEvent('twicc:open-new-project-dialog'))
+            },
+        },
+        {
+            id: 'create.workspace',
+            label: 'New Workspace',
+            icon: 'layer-group',
+            category: 'creation',
+            action: () => {
+                window.dispatchEvent(new CustomEvent('twicc:open-new-workspace-dialog'))
             },
         },
 
@@ -381,6 +403,25 @@ export function initStaticCommands(router) {
 
         // ── UI ────────────────────────────────────────────────────────
 
+        {
+            id: 'ui.manage-workspaces',
+            label: 'Manage Workspaces',
+            icon: 'layer-group',
+            category: 'ui',
+            action: () => {
+                window.dispatchEvent(new CustomEvent('twicc:open-manage-workspaces-dialog'))
+            },
+        },
+        {
+            id: 'ui.edit-workspace',
+            label: 'Edit Current Workspace',
+            icon: 'pencil',
+            category: 'ui',
+            when: () => !!route.query.workspace,
+            action: () => {
+                window.dispatchEvent(new CustomEvent('twicc:open-edit-workspace-dialog', { detail: { workspaceId: route.query.workspace } }))
+            },
+        },
         {
             id: 'ui.settings',
             label: 'Open Settings',

@@ -15,6 +15,7 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } 
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
+import { useWorkspacesStore } from '../stores/workspaces'
 import { apiFetch } from '../utils/api'
 import { debounce } from '../utils/debounce'
 import { formatDate } from '../utils/date'
@@ -28,6 +29,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useDataStore()
 const settingsStore = useSettingsStore()
+const workspacesStore = useWorkspacesStore()
 
 // ─── Time display (follows the same setting as session list) ─────────────
 const sessionTimeFormat = computed(() => settingsStore.getSessionTimeFormat)
@@ -179,6 +181,19 @@ const searchIndexPercent = computed(() => {
 const projects = computed(() =>
     store.getProjects.filter(p => !p.archived)
 )
+
+/** Active workspace project IDs (ordered), or null when no workspace is active. */
+const activeWsProjectIds = computed(() => {
+    const wsId = route.query.workspace
+    return wsId ? workspacesStore.getVisibleProjectIds(wsId) : null
+})
+
+const activeWsLabel = computed(() => {
+    const wsId = route.query.workspace
+    if (!wsId) return null
+    const ws = workspacesStore.getWorkspaceById(wsId)
+    return ws ? `${ws.name} projects` : null
+})
 
 // Selected project color for the dot in the closed select
 const selectedProjectColor = computed(() => {
@@ -435,7 +450,7 @@ defineExpose({ open })
                             class="selected-project-dot"
                             :style="selectedProjectColor ? { '--dot-color': selectedProjectColor } : null"
                         ></span>
-                        <ProjectSelectOptions :projects="projects" />
+                        <ProjectSelectOptions :projects="projects" :priority-project-ids="activeWsProjectIds" :priority-label="activeWsLabel" />
                     </wa-select>
 
                     <wa-select

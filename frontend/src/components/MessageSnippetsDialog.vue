@@ -1,10 +1,13 @@
 <script setup>
 // MessageSnippetsDialog.vue - Dialog for managing message input snippets with scope grouping
 import { ref, computed, nextTick, useId } from 'vue'
+import { useRoute } from 'vue-router'
 import { useMessageSnippetsStore } from '../stores/messageSnippets'
 import { useDataStore } from '../stores/data'
+import { useWorkspacesStore } from '../stores/workspaces'
 import ProjectBadge from './ProjectBadge.vue'
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree'
+import { splitProjectsByPriority } from '../utils/projectSort'
 import { PLACEHOLDERS, extractPlaceholders } from '../utils/snippetPlaceholders'
 
 const props = defineProps({
@@ -14,8 +17,10 @@ const props = defineProps({
     },
 })
 
+const route = useRoute()
 const messageSnippetsStore = useMessageSnippetsStore()
 const dataStore = useDataStore()
+const workspacesStore = useWorkspacesStore()
 
 // ── Dialog refs ──────────────────────────────────────────────────────
 const dialogRef = ref(null)
@@ -59,6 +64,45 @@ const unnamedFlatTree = computed(() => {
     return flattenProjectTree(roots)
 })
 
+/** Active workspace project IDs (ordered), or null when no workspace is active. */
+const activeWsProjectIds = computed(() => {
+    const wsId = route.query.workspace
+    return wsId ? workspacesStore.getVisibleProjectIds(wsId) : null
+})
+
+const activeWsLabel = computed(() => {
+    const wsId = route.query.workspace
+    if (!wsId) return null
+    const ws = workspacesStore.getWorkspaceById(wsId)
+    return ws ? `${ws.name} projects` : null
+})
+
+/** When a workspace is active, split named projects into prioritized and others. */
+const namedSplit = computed(() =>
+    splitProjectsByPriority(namedProjects.value, activeWsProjectIds.value)
+)
+
+/** When a workspace is active, split unnamed projects into prioritized and others. */
+const unnamedSplit = computed(() => {
+    const unnamed = activeProjects.value.filter(p => p.name === null)
+    return splitProjectsByPriority(unnamed, activeWsProjectIds.value)
+})
+
+/** Prioritized unnamed projects as a flat tree (for the scope selector). */
+const prioritizedUnnamedFlatTree = computed(() => {
+    if (!unnamedSplit.value.prioritized.length) return []
+    const roots = buildProjectTree(unnamedSplit.value.prioritized)
+    return flattenProjectTree(roots)
+})
+
+/** Non-prioritized unnamed projects as a flat tree (for the scope selector). */
+const othersUnnamedFlatTree = computed(() => {
+    if (!activeWsProjectIds.value) return unnamedFlatTree.value
+    if (!unnamedSplit.value.others.length) return []
+    const roots = buildProjectTree(unnamedSplit.value.others)
+    return flattenProjectTree(roots)
+})
+
 /**
  * Project IDs in display order: named projects by mtime desc, then unnamed sorted by directory.
  * Used to order scope groups in the list view.
@@ -71,15 +115,34 @@ const orderedProjectIds = computed(() => [
         .map(p => p.id),
 ])
 
+/** Active workspace ID from the route. */
+const activeWorkspaceId = computed(() => route.query.workspace || null)
+
 /** Ordered snippet scopes for the list view. */
 const snippetScopes = computed(() =>
-    messageSnippetsStore.allSnippetScopes(props.currentProjectId, orderedProjectIds.value)
+    messageSnippetsStore.allSnippetScopes(
+        props.currentProjectId,
+        orderedProjectIds.value,
+        activeWorkspaceId.value,
+        activeWsProjectIds.value,
+    )
 )
+
+/** All selectable workspaces for the scope selector (current workspace first). */
+const selectableWorkspaces = computed(() => {
+    const all = workspacesStore.getSelectableWorkspaces
+    if (!activeWorkspaceId.value) return all
+    const current = all.find(ws => ws.id === activeWorkspaceId.value)
+    const others = all.filter(ws => ws.id !== activeWorkspaceId.value)
+    return current ? [current, ...others] : others
+})
 
 /** Color of the currently selected project scope (for the dot in the closed select). */
 const selectedScopeProjectColor = computed(() => {
-    if (!formData.value || formData.value.scope === 'global') return null
-    const pid = formData.value.scope.slice('project:'.length)
+    if (!formData.value) return null
+    const scope = formData.value.scope
+    if (scope === 'global' || scope.startsWith('workspace:')) return null
+    const pid = scope.slice('project:'.length)
     const project = dataStore.getProject(pid)
     return project?.color || null
 })
@@ -144,6 +207,27 @@ function cancelForm() {
 /** Extract project ID from a scope string like "project:xxx" */
 function projectIdFromScope(scope) {
     return scope.startsWith('project:') ? scope.slice('project:'.length) : null
+}
+
+/** Extract workspace ID from a scope string like "workspace:xxx" */
+function workspaceIdFromScope(scope) {
+    return scope.startsWith('workspace:') ? scope.slice('workspace:'.length) : null
+}
+
+/** Get workspace name for display in scope group headers. */
+function workspaceNameFromScope(scope) {
+    const wsId = workspaceIdFromScope(scope)
+    if (!wsId) return null
+    const ws = workspacesStore.getWorkspaceById(wsId)
+    return ws ? ws.name : wsId
+}
+
+/** Get workspace color from a scope string. */
+function workspaceColorFromScope(scope) {
+    const wsId = workspaceIdFromScope(scope)
+    if (!wsId) return null
+    const ws = workspacesStore.getWorkspaceById(wsId)
+    return ws?.color || null
 }
 
 /** Display text for a snippet in the list: label if set, otherwise the full text on one line. */
@@ -294,6 +378,10 @@ defineExpose({ open, close })
                 <!-- Group header -->
                 <div class="group-header">
                     <span v-if="group.scope === 'global'" class="group-header-global">All projects</span>
+                    <span v-else-if="group.scope.startsWith('workspace:')" class="group-header-workspace">
+                        <wa-icon name="layer-group" auto-width :style="workspaceColorFromScope(group.scope) ? { color: workspaceColorFromScope(group.scope) } : null"></wa-icon>
+                        {{ workspaceNameFromScope(group.scope) }}
+                    </span>
                     <ProjectBadge v-else :project-id="projectIdFromScope(group.scope)" use-directory-for-unnamed />
                 </div>
 
@@ -411,10 +499,34 @@ defineExpose({ open, close })
                     ></span>
                     <wa-option value="global">All projects</wa-option>
 
-                    <!-- Named projects (sorted by mtime desc) -->
-                    <wa-divider v-if="namedProjects.length"></wa-divider>
+                    <!-- Workspaces -->
+                    <template v-if="selectableWorkspaces.length">
+                        <wa-divider></wa-divider>
+                        <wa-option disabled class="section-header-option">Workspaces</wa-option>
+                        <wa-option
+                            v-for="ws in selectableWorkspaces"
+                            :key="ws.id"
+                            :value="`workspace:${ws.id}`"
+                            :label="ws.name"
+                        >
+                            <wa-icon name="layer-group" auto-width :style="{ marginRight: '0.5em', opacity: 0.6, ...(ws.color ? { color: ws.color, opacity: 1 } : {}) }"></wa-icon>
+                            {{ ws.name }}
+                        </wa-option>
+                    </template>
+
+                    <!-- Divider before projects when not in a workspace -->
+                    <template v-if="!activeWsLabel">
+                        <wa-divider></wa-divider>
+                        <wa-option v-if="selectableWorkspaces.length" disabled class="section-header-option">Projects</wa-option>
+                    </template>
+
+                    <!-- Workspace-prioritized projects (only when workspace is active) -->
+                    <template v-if="namedSplit.prioritized.length || prioritizedUnnamedFlatTree.length">
+                        <wa-divider></wa-divider>
+                        <wa-option disabled class="section-header-option">{{ activeWsLabel }}</wa-option>
+                    </template>
                     <wa-option
-                        v-for="p in namedProjects"
+                        v-for="p in namedSplit.prioritized"
                         :key="p.id"
                         :value="`project:${p.id}`"
                         :label="dataStore.getProjectDisplayName(p.id)"
@@ -422,9 +534,46 @@ defineExpose({ open, close })
                         <ProjectBadge :project-id="p.id" />
                     </wa-option>
 
-                    <!-- Unnamed projects (directory tree) -->
-                    <wa-divider v-if="unnamedFlatTree.length"></wa-divider>
-                    <template v-for="item in unnamedFlatTree" :key="item.key">
+                    <!-- Workspace-prioritized unnamed projects (directory tree) -->
+                    <wa-divider v-if="prioritizedUnnamedFlatTree.length"></wa-divider>
+                    <template v-for="item in prioritizedUnnamedFlatTree" :key="item.key">
+                        <wa-option
+                            v-if="item.isFolder"
+                            disabled
+                            class="tree-folder-option"
+                        >
+                            <span class="tree-folder-label" :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                {{ item.segment }}
+                            </span>
+                        </wa-option>
+                        <wa-option
+                            v-else
+                            :value="`project:${item.project.id}`"
+                            :label="dataStore.getProjectDisplayName(item.project.id)"
+                        >
+                            <span :style="{ paddingLeft: `${item.depth * 12}px` }">
+                                <ProjectBadge :project-id="item.project.id" />
+                            </span>
+                        </wa-option>
+                    </template>
+
+                    <!-- Remaining projects -->
+                    <template v-if="activeWsLabel && (namedSplit.others.length || othersUnnamedFlatTree.length)">
+                        <wa-divider></wa-divider>
+                        <wa-option disabled class="section-header-option">Other projects</wa-option>
+                    </template>
+                    <wa-option
+                        v-for="p in namedSplit.others"
+                        :key="p.id"
+                        :value="`project:${p.id}`"
+                        :label="dataStore.getProjectDisplayName(p.id)"
+                    >
+                        <ProjectBadge :project-id="p.id" />
+                    </wa-option>
+
+                    <!-- Remaining unnamed projects (directory tree) -->
+                    <wa-divider v-if="othersUnnamedFlatTree.length"></wa-divider>
+                    <template v-for="item in othersUnnamedFlatTree" :key="item.key">
                         <wa-option
                             v-if="item.isFolder"
                             disabled
@@ -525,6 +674,15 @@ defineExpose({ open, close })
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--wa-color-text-quiet);
+}
+
+.group-header-workspace {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    font-size: var(--wa-font-size-s);
+    font-weight: var(--wa-font-weight-semibold);
+    color: var(--wa-color-text-normal);
 }
 
 /* ── Snippet list ─────────────────────────────────────────────────── */
@@ -714,6 +872,14 @@ defineExpose({ open, close })
 .tree-folder-label {
     font-family: var(--wa-font-family-code);
     font-size: var(--wa-font-size-s);
+}
+
+.section-header-option {
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--wa-color-text-quiet);
 }
 
 /* ── Footer ───────────────────────────────────────────────────────── */

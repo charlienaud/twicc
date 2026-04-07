@@ -1,17 +1,22 @@
 <script setup>
 // ProjectDetailPanel.vue - Detail panel shown when no session is selected.
-// Handles two modes:
+// Handles three modes:
 // - Single project mode: shows project name, directory, sessions count, cost, date, edit button, sparkline
 // - All projects mode: shows aggregate info (total sessions, total cost, last update, global sparkline)
+// - Workspace mode: shows workspace name, aggregated stats from member projects, manage button
 
 import { ref, computed } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
+import { useWorkspacesStore } from '../stores/workspaces'
+import { isWorkspaceProjectId, extractWorkspaceId } from '../utils/workspaceIds'
+import { aggregateWeeklyActivity } from '../utils/activityAggregation'
 import { formatDate } from '../utils/date'
 import { SESSION_TIME_FORMAT } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectProcessIndicator from './ProjectProcessIndicator.vue'
 import ProjectEditDialog from './ProjectEditDialog.vue'
+import WorkspaceManageDialog from './WorkspaceManageDialog.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
 import CostDisplay from './CostDisplay.vue'
 import ContributionGraphs from './ContributionGraphs.vue'
@@ -27,6 +32,7 @@ const props = defineProps({
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
+const workspacesStore = useWorkspacesStore()
 
 // Costs setting
 const showCosts = computed(() => settingsStore.areCostsShown)
@@ -50,9 +56,21 @@ function timestampToDate(timestamp) {
 
 // Mode detection
 const isAllProjectsMode = computed(() => props.projectId === ALL_PROJECTS_ID)
+const isWorkspaceMode = computed(() => isWorkspaceProjectId(props.projectId))
+const isSingleProjectMode = computed(() => !isAllProjectsMode.value && !isWorkspaceMode.value)
+
+// Workspace data
+const workspaceId = computed(() => isWorkspaceMode.value ? extractWorkspaceId(props.projectId) : null)
+const workspace = computed(() => workspaceId.value ? workspacesStore.getWorkspaceById(workspaceId.value) : null)
+const workspaceProjectIds = computed(() =>
+    workspaceId.value ? workspacesStore.getVisibleProjectIds(workspaceId.value) : []
+)
+const workspaceProjects = computed(() =>
+    workspaceProjectIds.value.map(pid => store.getProject(pid)).filter(Boolean)
+)
 
 // Single project data
-const project = computed(() => isAllProjectsMode.value ? null : store.getProject(props.projectId))
+const project = computed(() => isSingleProjectMode.value ? store.getProject(props.projectId) : null)
 
 // All projects data (for aggregate mode)
 const allProjects = computed(() => store.getProjects)
@@ -60,62 +78,71 @@ const allProjects = computed(() => store.getProjects)
 // Display name
 const displayName = computed(() => {
     if (isAllProjectsMode.value) return 'All Projects'
+    if (isWorkspaceMode.value) return workspace.value?.name || 'Workspace'
     return store.getProjectDisplayName(props.projectId)
 })
 
 // Directory (single project only)
 const directory = computed(() => project.value?.directory || null)
 
+// The list of projects to aggregate over (for all-projects and workspace modes)
+const aggregatedProjects = computed(() => {
+    if (isWorkspaceMode.value) return workspaceProjects.value
+    if (isAllProjectsMode.value) return allProjects.value
+    return []
+})
+
 // Sessions count
 const sessionsCount = computed(() => {
-    if (isAllProjectsMode.value) {
-        return allProjects.value.reduce((sum, p) => sum + (p.sessions_count || 0), 0)
-    }
-    return project.value?.sessions_count || 0
+    if (isSingleProjectMode.value) return project.value?.sessions_count || 0
+    return aggregatedProjects.value.reduce((sum, p) => sum + (p.sessions_count || 0), 0)
 })
 
 // Total cost
 const totalCost = computed(() => {
-    if (isAllProjectsMode.value) {
-        const sum = allProjects.value.reduce((s, p) => s + (p.total_cost || 0), 0)
-        return sum > 0 ? sum : null
-    }
-    return project.value?.total_cost ?? null
+    if (isSingleProjectMode.value) return project.value?.total_cost ?? null
+    const sum = aggregatedProjects.value.reduce((s, p) => s + (p.total_cost || 0), 0)
+    return sum > 0 ? sum : null
 })
 
 // Last activity (mtime)
 const mtime = computed(() => {
-    if (isAllProjectsMode.value) {
-        // Most recent mtime among all projects
-        if (allProjects.value.length === 0) return null
-        return Math.max(...allProjects.value.map(p => p.mtime || 0))
-    }
-    return project.value?.mtime || null
+    if (isSingleProjectMode.value) return project.value?.mtime || null
+    if (aggregatedProjects.value.length === 0) return null
+    return Math.max(...aggregatedProjects.value.map(p => p.mtime || 0))
 })
 
-// Weekly activity data
+// Weekly activity data — for workspace mode, aggregate from member projects
 const weeklyActivity = computed(() => {
-    if (isAllProjectsMode.value) {
-        return store.weeklyActivity._global || []
+    if (isAllProjectsMode.value) return store.weeklyActivity._global || []
+    if (isWorkspaceMode.value) {
+        return aggregateWeeklyActivity(workspaceProjectIds.value, store.weeklyActivity)
     }
     return store.weeklyActivity[props.projectId] || []
 })
 
 // Edit dialog ref (single project only)
 const editDialogRef = ref(null)
+// Workspace manage dialog ref
+const manageDialogRef = ref(null)
 
 function handleEditClick() {
-    editDialogRef.value?.open()
+    if (isWorkspaceMode.value) {
+        manageDialogRef.value?.openForWorkspace(workspaceId.value)
+    } else {
+        editDialogRef.value?.open()
+    }
 }
 </script>
 
 <template>
     <div class="project-detail-panel">
         <div class="detail-content">
-            <!-- Header: project name + process indicator + edit button -->
+            <!-- Header: project/workspace name + process indicator + edit button -->
             <div class="detail-header">
                 <div class="detail-title-row">
-                    <template v-if="!isAllProjectsMode">
+                    <!-- Single project mode -->
+                    <template v-if="isSingleProjectMode">
                         <ProjectBadge :project-id="projectId" class="detail-title" />
                         <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline">
                             <ActivitySparkline
@@ -126,15 +153,19 @@ function handleEditClick() {
                         <AppTooltip :for="`detail-sparkline-${projectId}`">Project activity (message turns per week)</AppTooltip>
                         <ProjectProcessIndicator :project-id="projectId" size="small" />
                     </template>
+                    <!-- Workspace or All Projects mode -->
                     <template v-else>
-                        <h2 class="detail-title all-projects-title">{{ displayName }}</h2>
-                        <span id="detail-sparkline-all-projects" class="detail-sparkline">
+                        <h2 class="detail-title all-projects-title">
+                            <wa-icon v-if="isWorkspaceMode" name="layer-group" auto-width :style="workspace?.color ? { color: workspace.color } : null"></wa-icon>
+                            {{ displayName }}
+                        </h2>
+                        <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline">
                             <ActivitySparkline
-                                id-suffix="all-projects-detail"
+                                :id-suffix="`${projectId}-detail`"
                                 :data="weeklyActivity"
                             />
                         </span>
-                        <AppTooltip for="detail-sparkline-all-projects">Overall activity (message turns per week)</AppTooltip>
+                        <AppTooltip :for="`detail-sparkline-${projectId}`">{{ isWorkspaceMode ? 'Workspace' : 'Overall' }} activity (message turns per week)</AppTooltip>
                     </template>
                 </div>
                 <wa-button
@@ -146,13 +177,14 @@ function handleEditClick() {
                     class="edit-button"
                     @click="handleEditClick"
                 >
-                    <wa-icon name="pencil"></wa-icon>
+                    <wa-icon :name="isWorkspaceMode ? 'gear' : 'pencil'"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="!isAllProjectsMode" for="detail-edit-button">Edit project (name and color)</AppTooltip>
+                <AppTooltip v-if="isWorkspaceMode" for="detail-edit-button">Manage workspace</AppTooltip>
+                <AppTooltip v-else-if="isSingleProjectMode" for="detail-edit-button">Edit project (name and color)</AppTooltip>
             </div>
 
             <!-- Directory (single project only) -->
-            <div v-if="!isAllProjectsMode && directory" class="detail-directory">
+            <div v-if="isSingleProjectMode && directory" class="detail-directory">
                 <wa-icon name="folder" class="detail-icon"></wa-icon>
                 <span>{{ directory }}</span>
             </div>
@@ -181,12 +213,14 @@ function handleEditClick() {
             </div>
 
             <!-- Contribution graphs (daily activity heatmaps) -->
-            <ContributionGraphs :project-id="projectId" />
+            <ContributionGraphs :project-id="projectId" :project-ids="isWorkspaceMode ? workspaceProjectIds : null" />
 
         </div>
 
         <!-- Edit dialog (single project only) -->
-        <ProjectEditDialog v-if="!isAllProjectsMode" ref="editDialogRef" :project="project" />
+        <ProjectEditDialog v-if="isSingleProjectMode" ref="editDialogRef" :project="project" />
+        <!-- Workspace manage dialog -->
+        <WorkspaceManageDialog v-if="isWorkspaceMode" ref="manageDialogRef" />
     </div>
 </template>
 

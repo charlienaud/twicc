@@ -36,6 +36,7 @@ const SETTINGS_SCHEMA = {
     compactSessionList: false,
     showArchivedSessions: false,
     showArchivedProjects: false,
+    showArchivedWorkspaces: false,
     defaultPermissionMode: DEFAULT_PERMISSION_MODE,
     alwaysApplyDefaultPermissionMode: false,
     defaultModel: DEFAULT_MODEL,
@@ -89,6 +90,7 @@ const SETTINGS_VALIDATORS = {
     compactSessionList: (v) => typeof v === 'boolean',
     showArchivedSessions: (v) => typeof v === 'boolean',
     showArchivedProjects: (v) => typeof v === 'boolean',
+    showArchivedWorkspaces: (v) => typeof v === 'boolean',
     defaultPermissionMode: (v) => Object.values(PERMISSION_MODE).includes(v),
     alwaysApplyDefaultPermissionMode: (v) => typeof v === 'boolean',
     defaultModel: (v) => Object.values(MODEL).includes(v),
@@ -191,6 +193,7 @@ export const useSettingsStore = defineStore('settings', {
         isCompactSessionList: (state) => state.compactSessionList,
         isShowArchivedSessions: (state) => state.showArchivedSessions,
         isShowArchivedProjects: (state) => state.showArchivedProjects,
+        isShowArchivedWorkspaces: (state) => state.showArchivedWorkspaces,
         getDefaultPermissionMode: (state) => state.defaultPermissionMode,
         isAlwaysApplyDefaultPermissionMode: (state) => state.alwaysApplyDefaultPermissionMode,
         getDefaultModel: (state) => state.defaultModel,
@@ -439,6 +442,16 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set show archived workspaces mode.
+         * This setting is not exposed in the settings panel — it is only
+         * toggled from the workspace list UI.
+         * @param {boolean} enabled
+         */
+        setShowArchivedWorkspaces(value) {
+            this.showArchivedWorkspaces = value
+        },
+
+        /**
          * Set the default permission mode for new sessions.
          * @param {string} mode - One of PERMISSION_MODE values
          */
@@ -684,6 +697,7 @@ export function initSettings() {
             compactSessionList: store.compactSessionList,
             showArchivedSessions: store.showArchivedSessions,
             showArchivedProjects: store.showArchivedProjects,
+            showArchivedWorkspaces: store.showArchivedWorkspaces,
             defaultPermissionMode: store.defaultPermissionMode,
             alwaysApplyDefaultPermissionMode: store.alwaysApplyDefaultPermissionMode,
             defaultModel: store.defaultModel,

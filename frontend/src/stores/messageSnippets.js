@@ -10,71 +10,89 @@ import { defineStore } from 'pinia'
  */
 export const useMessageSnippetsStore = defineStore('messageSnippets', {
     state: () => ({
-        snippets: {}, // { global: [], "project:<id>": [] }
+        snippets: {}, // { global: [], "workspace:<id>": [], "project:<id>": [] }
         _initialized: false,
     }),
 
     getters: {
         /**
-         * Get snippets for a given project: global + project-specific, merged.
-         * @returns {Function} (projectId: string) => Array
+         * Get snippets for a given project: global + workspace(s) + project-specific, merged.
+         * @returns {Function} (projectId: string, workspaceIds?: string[]) => Array
          */
-        getSnippetsForProject: (state) => (projectId) => {
+        getSnippetsForProject: (state) => (projectId, workspaceIds = null) => {
             const global = state.snippets.global || []
-            const projectKey = `project:${projectId}`
-            const project = state.snippets[projectKey] || []
-            return [...global, ...project]
+            const wsSnippets = (workspaceIds || []).flatMap(wsId => state.snippets[`workspace:${wsId}`] || [])
+            const project = state.snippets[`project:${projectId}`] || []
+            return [...global, ...wsSnippets, ...project]
         },
 
         /**
-         * Check if there are any snippets for a given project (global or project-specific).
-         * @returns {Function} (projectId: string) => boolean
+         * Check if there are any snippets for a given project (global, workspace(s) or project-specific).
+         * @returns {Function} (projectId: string, workspaceIds?: string[]) => boolean
          */
-        hasSnippetsForProject: (state) => (projectId) => {
-            const global = state.snippets.global || []
-            const projectKey = `project:${projectId}`
-            const project = state.snippets[projectKey] || []
-            return global.length > 0 || project.length > 0
+        hasSnippetsForProject: (state) => (projectId, workspaceIds = null) => {
+            if ((state.snippets.global || []).length > 0) return true
+            if ((state.snippets[`project:${projectId}`] || []).length > 0) return true
+            return (workspaceIds || []).some(wsId => (state.snippets[`workspace:${wsId}`] || []).length > 0)
         },
 
         /**
          * Get all snippet scopes that have entries, for the manage dialog.
-         * Returns a function (currentProjectId, orderedProjectIds) => Array of { scope, snippets }.
-         * Order: global first, then current project, then other projects in orderedProjectIds order,
-         * then any remaining scopes not covered (e.g. archived/stale projects still having snippets).
-         * @returns {Function} (currentProjectId: string|null, orderedProjectIds: string[]) => Array<{ scope: string, snippets: Array }>
+         * Order: global, current workspace, current project, other workspace projects,
+         * other workspaces with snippets, other projects, then orphan scopes.
+         * @returns {Function}
          */
-        allSnippetScopes: (state) => (currentProjectId, orderedProjectIds) => {
+        allSnippetScopes: (state) => (currentProjectId, orderedProjectIds, currentWorkspaceId = null, currentWorkspaceProjectIds = null) => {
             const result = []
-            const currentScope = currentProjectId ? `project:${currentProjectId}` : null
+            const handledScopes = new Set()
 
-            // 1. Global first (only if it has snippets)
+            function push(scope) {
+                if (handledScopes.has(scope)) return false
+                if (!state.snippets[scope]?.length) return false
+                result.push({ scope, snippets: state.snippets[scope] })
+                handledScopes.add(scope)
+                return true
+            }
+
+            // 1. Global
             if ((state.snippets.global || []).length > 0) {
                 result.push({ scope: 'global', snippets: state.snippets.global })
+                handledScopes.add('global')
             }
 
-            // 2. Current project (if it has snippets)
-            if (currentScope && state.snippets[currentScope]?.length > 0) {
-                result.push({ scope: currentScope, snippets: state.snippets[currentScope] })
+            // 2. Current workspace
+            if (currentWorkspaceId) {
+                push(`workspace:${currentWorkspaceId}`)
             }
 
-            // 3. Other projects in the provided order (skip current project)
-            const handledScopes = new Set(result.map(r => r.scope))
-            for (const pid of orderedProjectIds) {
-                if (pid === currentProjectId) continue
-                const scope = `project:${pid}`
-                if (state.snippets[scope]?.length > 0 && !handledScopes.has(scope)) {
-                    result.push({ scope, snippets: state.snippets[scope] })
-                    handledScopes.add(scope)
+            // 3. Current project
+            if (currentProjectId) {
+                push(`project:${currentProjectId}`)
+            }
+
+            // 4. Other projects in current workspace
+            if (currentWorkspaceProjectIds) {
+                for (const pid of currentWorkspaceProjectIds) {
+                    if (pid === currentProjectId) continue
+                    push(`project:${pid}`)
                 }
             }
 
-            // 4. Fallback: any remaining scopes not covered (e.g. archived/stale projects with snippets)
+            // 5. Other workspaces with snippets
             for (const scope of Object.keys(state.snippets)) {
-                if (!scope.startsWith('project:')) continue
-                if (!state.snippets[scope]?.length) continue
-                if (handledScopes.has(scope)) continue
-                result.push({ scope, snippets: state.snippets[scope] })
+                if (!scope.startsWith('workspace:')) continue
+                push(scope)
+            }
+
+            // 6. Other projects in the provided order
+            for (const pid of orderedProjectIds) {
+                push(`project:${pid}`)
+            }
+
+            // 7. Orphan scopes (deleted workspaces/projects that still have snippets)
+            for (const scope of Object.keys(state.snippets)) {
+                if (scope === 'global') continue
+                push(scope)
             }
 
             return result

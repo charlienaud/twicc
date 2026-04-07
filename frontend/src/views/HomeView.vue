@@ -2,17 +2,21 @@
 import { computed, ref, onMounted, onUnmounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
+import { useWorkspacesStore } from '../stores/workspaces'
 import { useStartupPolling } from '../composables/useStartupPolling'
 import ProjectList from '../components/ProjectList.vue'
+import WorkspaceList from '../components/WorkspaceList.vue'
 import FetchErrorPanel from '../components/FetchErrorPanel.vue'
 import SettingsPopover from '../components/SettingsPopover.vue'
 import ActivitySparkline from '../components/ActivitySparkline.vue'
 import AppTooltip from '../components/AppTooltip.vue'
 import StartupProgressCallout from '../components/StartupProgressCallout.vue'
 import ProjectEditDialog from '../components/ProjectEditDialog.vue'
+import WorkspaceManageDialog from '../components/WorkspaceManageDialog.vue'
 
 const router = useRouter()
 const store = useDataStore()
+const workspacesStore = useWorkspacesStore()
 
 // Poll home data during startup so sparklines and project stats update
 // as sessions are indexed by background compute.
@@ -32,6 +36,7 @@ function handleProjectSelect(project) {
 }
 
 const createDialogRef = ref(null)
+const manageDialogRef = ref(null)
 
 function openCreateDialog() {
     createDialogRef.value?.open()
@@ -41,6 +46,25 @@ function handleProjectCreated(project) {
     router.push({ name: 'project', params: { projectId: project.id } })
 }
 
+// Workspaces
+function handleWorkspaceSelect(workspace) {
+    router.push({ name: 'projects-all', query: { workspace: workspace.id } })
+}
+
+function handleWorkspaceMenuSelect(event, workspace) {
+    const item = event.detail?.item
+    if (!item) return
+    if (item.value === 'manage') {
+        manageDialogRef.value?.openForWorkspace(workspace.id)
+    } else if (item.value === 'archive') {
+        workspacesStore.updateWorkspace(workspace.id, { archived: true })
+    } else if (item.value === 'unarchive') {
+        workspacesStore.updateWorkspace(workspace.id, { archived: false })
+    } else if (item.value === 'delete') {
+        workspacesStore.deleteWorkspace(workspace.id)
+    }
+}
+
 // Global weekly activity from the store
 const globalWeeklyActivity = computed(() => store.weeklyActivity._global || [])
 
@@ -48,16 +72,31 @@ async function handleRetry() {
     await store.loadHomeData()
 }
 
-// Open the new project dialog (triggered by command palette custom event)
+// Open dialogs (triggered by command palette custom events)
 function openNewProjectDialog() {
     createDialogRef.value?.open()
+}
+function openNewWorkspaceDialog() {
+    manageDialogRef.value?.openNew()
+}
+function openManageWorkspacesDialog() {
+    manageDialogRef.value?.open()
+}
+function openEditWorkspaceDialog(e) {
+    manageDialogRef.value?.openForWorkspace(e.detail?.workspaceId)
 }
 
 onMounted(() => {
     window.addEventListener('twicc:open-new-project-dialog', openNewProjectDialog)
+    window.addEventListener('twicc:open-new-workspace-dialog', openNewWorkspaceDialog)
+    window.addEventListener('twicc:open-manage-workspaces-dialog', openManageWorkspacesDialog)
+    window.addEventListener('twicc:open-edit-workspace-dialog', openEditWorkspaceDialog)
 })
 onBeforeUnmount(() => {
     window.removeEventListener('twicc:open-new-project-dialog', openNewProjectDialog)
+    window.removeEventListener('twicc:open-new-workspace-dialog', openNewWorkspaceDialog)
+    window.removeEventListener('twicc:open-manage-workspaces-dialog', openManageWorkspacesDialog)
+    window.removeEventListener('twicc:open-edit-workspace-dialog', openEditWorkspaceDialog)
 })
 </script>
 
@@ -69,10 +108,6 @@ onBeforeUnmount(() => {
                 <ActivitySparkline :data="globalWeeklyActivity" />
             </span>
             <AppTooltip for="home-global-sparkline">Overall activity (message turns per week)</AppTooltip>
-            <wa-button v-if="!store.isInitialSyncInProgress" class="new-project-button" variant="neutral" appearance="outlined" size="small" @click="openCreateDialog">
-                <wa-icon slot="start" name="plus"></wa-icon>
-                New project
-            </wa-button>
             <wa-button v-if="totalSessionsCount > 0" class="view-all-button" variant="brand" appearance="filled-outlined" size="small" @click="router.push({ name: 'projects-all' })">
                 All {{ totalSessionsCount }} session{{ totalSessionsCount === 1 ? '' : 's' }} <wa-icon slot="end" name="arrow-right"></wa-icon>
             </wa-button>
@@ -98,7 +133,17 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Normal content -->
-            <ProjectList v-else @select="handleProjectSelect" />
+            <template v-else>
+                <!-- Workspaces section -->
+                <WorkspaceList
+                    @select="handleWorkspaceSelect"
+                    @menu-select="handleWorkspaceMenuSelect"
+                    @manage="manageDialogRef?.open()"
+                    @create="manageDialogRef?.openNew()"
+                />
+
+                <ProjectList @select="handleProjectSelect" @create="openCreateDialog" />
+            </template>
         </main>
 
         <div class="home-settings">
@@ -106,6 +151,7 @@ onBeforeUnmount(() => {
         </div>
 
         <ProjectEditDialog ref="createDialogRef" @saved="handleProjectCreated" />
+        <WorkspaceManageDialog ref="manageDialogRef" />
     </div>
 </template>
 
@@ -137,7 +183,7 @@ onBeforeUnmount(() => {
     color: var(--wa-color-text-normal);
 }
 
-.new-project-button {
+.view-all-button {
     margin-left: auto;
 }
 
@@ -149,6 +195,7 @@ onBeforeUnmount(() => {
     flex: 1;
     display: flex;
     flex-direction: column;
+    gap: var(--wa-space-l);
     min-height: 0;
 }
 

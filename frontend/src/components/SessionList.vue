@@ -8,6 +8,8 @@
  */
 import { ref, computed, watch, nextTick } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
+import { useWorkspacesStore } from '../stores/workspaces'
+import { isWorkspaceProjectId, extractWorkspaceId } from '../utils/workspaceIds'
 import VirtualScroller from './VirtualScroller.vue'
 import SessionListItem from './SessionListItem.vue'
 
@@ -44,15 +46,26 @@ const props = defineProps({
 
 const store = useDataStore()
 
+// Base sessions: all sessions for the current context (workspace, all projects, or single project)
+const baseSessions = computed(() => {
+    if (isWorkspaceProjectId(props.projectId)) {
+        // Workspace mode: get all sessions, filter to workspace's visible projects
+        const wsId = extractWorkspaceId(props.projectId)
+        const wsStore = useWorkspacesStore()
+        const visibleIds = new Set(wsStore.getVisibleProjectIds(wsId))
+        return store.getAllSessions.filter(s => visibleIds.has(s.project_id))
+    }
+    if (props.projectId === ALL_PROJECTS_ID) {
+        return store.getAllSessions
+    }
+    return store.getProjectSessions(props.projectId)
+})
+
 // Sessions are already sorted by mtime desc in the getter
 // Filter out archived sessions unless showArchived is enabled
 // Always keep the currently selected session visible (even if archived)
 const allSessions = computed(() => {
-    const baseSessions = props.projectId === ALL_PROJECTS_ID
-        ? store.getAllSessions
-        : store.getProjectSessions(props.projectId)
-
-    const filtered = baseSessions.filter(s =>
+    const filtered = baseSessions.value.filter(s =>
         (props.showArchived || !s.archived || s.id === props.sessionId) &&
         (props.showArchivedProjects || !store.getProject(s.project_id)?.archived)
     )

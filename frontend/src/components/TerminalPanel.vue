@@ -1,8 +1,10 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useTerminalConfigStore } from '../stores/terminalConfig'
+import { useWorkspacesStore } from '../stores/workspaces'
 import { useTerminalTabsStore } from '../stores/terminalTabs'
 import { sendWsMessage } from '../composables/useWebSocket'
 import { toast } from '../composables/useToast'
@@ -26,9 +28,11 @@ const props = defineProps({
     },
 })
 
+const route = useRoute()
 const settingsStore = useSettingsStore()
 const dataStore = useDataStore()
 const terminalConfigStore = useTerminalConfigStore()
+const workspacesStore = useWorkspacesStore()
 const terminalTabsStore = useTerminalTabsStore()
 
 // Resolve projectId from sessionId
@@ -44,10 +48,21 @@ const placeholderContext = computed(() => {
     return { session: s, project, projectName }
 })
 
-// Snippets for the current project (global + project-specific, merged),
+// Workspace IDs relevant for snippet display:
+// - If a workspace is active in the URL, use only that one.
+// - Otherwise, use all workspaces that contain this project.
+const snippetWorkspaceIds = computed(() => {
+    const wsId = route.query.workspace
+    if (wsId) return [wsId]
+    const pid = projectId.value
+    if (!pid) return []
+    return workspacesStore.getWorkspacesForProject(pid).map(ws => ws.id)
+})
+
+// Snippets for the current project (global + workspace(s) + project-specific, merged),
 // enriched with placeholder availability info (_disabled / _disabledReason).
 const snippetsForProject = computed(() => {
-    const raw = projectId.value ? terminalConfigStore.getSnippetsForProject(projectId.value) : []
+    const raw = projectId.value ? terminalConfigStore.getSnippetsForProject(projectId.value, snippetWorkspaceIds.value) : []
     const ctx = placeholderContext.value
 
     return raw.map(snippet => {

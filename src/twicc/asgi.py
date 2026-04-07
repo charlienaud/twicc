@@ -26,6 +26,7 @@ from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny, 
 from twicc.agent.manager import get_process_manager
 from twicc.agent.states import ProcessInfo, ProcessState, serialize_process_info
 from twicc.synced_settings import read_synced_settings, write_synced_settings
+from twicc.workspaces import read_workspaces, write_workspaces
 from twicc.message_snippets import read_message_snippets_config, write_message_snippets_config
 from twicc.terminal_config import read_terminal_config, write_terminal_config
 from twicc.usage_task import get_usage_message_for_connection
@@ -631,6 +632,10 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             message_snippets = await sync_to_async(read_message_snippets_config)()
             await self.send_json({"type": "message_snippets_updated", "config": message_snippets})
 
+        if self._should_send("workspaces_updated"):
+            workspaces = await sync_to_async(read_workspaces)()
+            await self.send_json({"type": "workspaces_updated", "workspaces": workspaces.get("workspaces", [])})
+
         # Send current startup progress (if any phase is still active)
         if self._should_send("startup_progress"):
             from twicc.startup_progress import get_startup_progress
@@ -698,6 +703,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
 
         elif msg_type == "update_synced_settings":
             await self._handle_update_synced_settings(content)
+
+        elif msg_type == "update_workspaces":
+            await self._handle_update_workspaces(content)
 
         elif msg_type == "update_terminal_config":
             await self._handle_update_terminal_config(content)
@@ -1156,6 +1164,25 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
             {
                 "type": "broadcast",
                 "data": {"type": "synced_settings_updated", "settings": synced_settings},
+            },
+        )
+
+    async def _handle_update_workspaces(self, content: dict) -> None:
+        """Handle workspace definitions update from a client."""
+        workspaces = content.get("workspaces")
+        if not isinstance(workspaces, list):
+            return
+
+        def _write():
+            write_workspaces({"workspaces": workspaces})
+
+        await sync_to_async(_write)()
+
+        await self.channel_layer.group_send(
+            "updates",
+            {
+                "type": "broadcast",
+                "data": {"type": "workspaces_updated", "workspaces": workspaces},
             },
         )
 

@@ -111,3 +111,43 @@ router.beforeEach(async (to) => {
 
     return true
 })
+
+// Propagate workspace query param across navigations.
+// The workspace is preserved unless:
+// - The destination explicitly sets/clears ?workspace= (e.g., switching workspaces)
+// - The destination project is not in the workspace (e.g., following a search result to another project)
+// - Navigating to the home page or a route without a project context
+router.beforeEach(async (to, from) => {
+    const currentWs = from.query?.workspace
+    if (!currentWs) return                          // No workspace active
+    if (to.query.workspace !== undefined) return     // Destination explicitly sets/clears
+
+    // Check if the destination has a projectId (works for both /project/:id and /projects/:id/session/:id routes)
+    const targetProjectId = to.params?.projectId
+    if (targetProjectId) {
+        // Any route with a projectId: keep workspace only if the project belongs to it
+        const { useWorkspacesStore } = await import('./stores/workspaces')
+        const wsStore = useWorkspacesStore()
+        const ws = wsStore.getWorkspaceById(currentWs)
+        if (ws?.projectIds.includes(targetProjectId)) {
+            return { ...to, query: { ...to.query, workspace: currentWs } }
+        }
+        // Project not in workspace → workspace dropped
+        return
+    }
+
+    // Routes without a projectId (home, projects-all, login, etc.) → workspace dropped.
+    // Navigations that need to keep workspace must include it explicitly in query.
+})
+
+// Clean up explicit workspace-clear signal from URL.
+// When navigating with { workspace: '' } to bypass guard propagation,
+// the URL ends up with ?workspace= — strip it via replaceState (no guard re-trigger).
+router.afterEach((to) => {
+    if (to.query.workspace === '') {
+        const params = new URLSearchParams(to.query)
+        params.delete('workspace')
+        const search = params.toString()
+        window.history.replaceState(history.state, '', to.path + (search ? '?' + search : '') + (to.hash || ''))
+    }
+})

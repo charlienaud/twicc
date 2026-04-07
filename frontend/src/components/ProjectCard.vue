@@ -85,36 +85,36 @@ function handleMenuSelect(event) {
                 <wa-icon v-if="codeCommentsCount > 0" :id="`project-comments-${project.id}`" name="comment" variant="regular" class="code-comments-indicator"></wa-icon>
                 <AppTooltip v-if="codeCommentsCount > 0" :for="`project-comments-${project.id}`">{{ codeCommentsTooltip }}</AppTooltip>
                 <ProjectProcessIndicator :project-id="project.id" size="small" />
-                <wa-tag v-if="project.archived" variant="neutral" size="small">Archived</wa-tag>
-            </div>
-            <div class="project-menu" @click.stop>
-                <wa-dropdown
-                    placement="bottom-end"
-                    @wa-select="handleMenuSelect"
-                >
-                    <wa-button
-                        :id="`project-menu-trigger-${project.id}`"
-                        slot="trigger"
-                        variant="neutral"
-                        appearance="plain"
-                        size="small"
+                <wa-tag v-if="project.archived" variant="neutral" size="small" class="archived-tag">Archived</wa-tag>
+                <div class="project-menu" @click.stop>
+                    <wa-dropdown
+                        placement="bottom-end"
+                        @wa-select="handleMenuSelect"
                     >
-                        <wa-icon name="ellipsis" label="Project menu"></wa-icon>
-                    </wa-button>
-                    <wa-dropdown-item value="edit">
-                        <wa-icon slot="icon" name="pencil"></wa-icon>
-                        Edit
-                    </wa-dropdown-item>
-                    <wa-dropdown-item v-if="!project.archived" value="archive">
-                        <wa-icon slot="icon" name="box-archive"></wa-icon>
-                        Archive
-                    </wa-dropdown-item>
-                    <wa-dropdown-item v-if="project.archived" value="unarchive">
-                        <wa-icon slot="icon" name="box-open"></wa-icon>
-                        Unarchive
-                    </wa-dropdown-item>
-                </wa-dropdown>
-                <AppTooltip :for="`project-menu-trigger-${project.id}`">Project actions</AppTooltip>
+                        <wa-button
+                            :id="`project-menu-trigger-${project.id}`"
+                            slot="trigger"
+                            variant="neutral"
+                            appearance="plain"
+                            size="small"
+                        >
+                            <wa-icon name="ellipsis" label="Project menu"></wa-icon>
+                        </wa-button>
+                        <wa-dropdown-item value="edit">
+                            <wa-icon slot="icon" name="pencil"></wa-icon>
+                            Edit
+                        </wa-dropdown-item>
+                        <wa-dropdown-item v-if="!project.archived" value="archive">
+                            <wa-icon slot="icon" name="box-archive"></wa-icon>
+                            Archive
+                        </wa-dropdown-item>
+                        <wa-dropdown-item v-if="project.archived" value="unarchive">
+                            <wa-icon slot="icon" name="box-open"></wa-icon>
+                            Unarchive
+                        </wa-dropdown-item>
+                    </wa-dropdown>
+                    <AppTooltip :for="`project-menu-trigger-${project.id}`">Project actions</AppTooltip>
+                </div>
             </div>
             <div v-if="project.directory" class="project-directory">{{ project.directory }}</div>
             <div class="project-meta-wrapper">
@@ -159,7 +159,6 @@ function handleMenuSelect(event) {
 }
 
 .project-info {
-    position: relative;
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-xs);
@@ -168,7 +167,13 @@ function handleMenuSelect(event) {
 .project-title-row {
     display: flex;
     align-items: center;
-    gap: var(--wa-space-xl);
+    column-gap: var(--wa-space-s);
+}
+
+@media (width <= 50rem) {
+    .project-title-row {
+        flex-wrap: wrap;
+    }
 }
 
 .code-comments-indicator {
@@ -183,9 +188,8 @@ function handleMenuSelect(event) {
 }
 
 .project-menu {
-    position: absolute;
-    top: 0;
-    right: 0;
+    margin-left: auto;
+    translate: var(--wa-space-m) 0;
 }
 
 .project-directory {
@@ -202,8 +206,9 @@ function handleMenuSelect(event) {
 
 .project-meta {
     display: flex;
+    flex-wrap: wrap;
     justify-content: start;
-    gap: var(--wa-space-m);
+    column-gap: var(--wa-space-m);
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
 

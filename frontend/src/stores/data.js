@@ -26,6 +26,7 @@ import { processFile, mediasToSdkFormat } from '../utils/fileUtils'
 import { generateUUID } from '../utils/crypto'
 import { debounce } from '../utils/debounce'
 import { apiFetch } from '../utils/api'
+import { isWorkspaceProjectId, extractWorkspaceId } from '../utils/workspaceIds'
 import { getParsedContent, setParsedContent, clearParsedContent, hasContent } from '../utils/parsedContent'
 // Note: respondToPendingRequest is imported lazily to avoid circular dependency
 // (data.js ↔ useWebSocket.js)
@@ -982,8 +983,8 @@ export const useDataStore = defineStore('data', {
             const state = this._ensureProjectLocalState(projectId)
 
             // Build URL based on project type
-            const isAllProjects = projectId === ALL_PROJECTS_ID
-            const baseUrl = isAllProjects
+            const isMultiProject = projectId === ALL_PROJECTS_ID || isWorkspaceProjectId(projectId)
+            const baseUrl = isMultiProject
                 ? '/api/sessions/'
                 : `/api/projects/${projectId}/sessions/`
 
@@ -991,6 +992,18 @@ export const useDataStore = defineStore('data', {
             const params = new URLSearchParams()
             if (state.oldestSessionMtime != null) {
                 params.set('before_mtime', state.oldestSessionMtime)
+            }
+
+            // For workspace mode, filter by the workspace's visible project IDs
+            if (isWorkspaceProjectId(projectId)) {
+                const wsId = extractWorkspaceId(projectId)
+                // Lazy import to avoid circular dependency
+                const { useWorkspacesStore } = await import('./workspaces')
+                const wsStore = useWorkspacesStore()
+                const visibleIds = wsStore.getVisibleProjectIds(wsId)
+                if (visibleIds.length) {
+                    params.set('project_ids', visibleIds.join(','))
+                }
             }
 
             const url = params.toString() ? `${baseUrl}?${params}` : baseUrl

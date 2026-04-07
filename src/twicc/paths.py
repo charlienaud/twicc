@@ -99,6 +99,11 @@ def get_message_snippets_config_path() -> Path:
     return get_data_dir() / "message-snippets.json"
 
 
+def get_workspaces_path() -> Path:
+    """Path to the workspaces definition file."""
+    return get_data_dir() / "workspaces.json"
+
+
 def ensure_data_dirs() -> None:
     """Create the data directory structure if it doesn't exist."""
     get_db_dir().mkdir(parents=True, exist_ok=True)

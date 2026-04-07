@@ -27,6 +27,7 @@ const saveButtonRef = ref(null)
 const localDirectory = ref('')
 const localName = ref('')
 const localColor = ref('')
+const localArchived = ref(false)
 const isSaving = ref(false)
 const errorMessage = ref('')
 
@@ -41,14 +42,16 @@ watch(
     () => props.project,
     (newProject) => {
         if (newProject) {
-            // Edit mode: pre-fill with displayName (computed from name, directory, or id)
-            localName.value = store.getProjectDisplayName(newProject.id)
+            // Edit mode: use actual name (null for unnamed projects, not the display name)
+            localName.value = newProject.name || ''
             localColor.value = newProject.color || ''
+            localArchived.value = newProject.archived || false
         } else {
             // Create mode: reset all fields
             localDirectory.value = ''
             localName.value = ''
             localColor.value = ''
+            localArchived.value = false
         }
     },
     { immediate: true }
@@ -98,8 +101,9 @@ function open() {
     } else if (props.project) {
         // Reset to current project values (handles reopen for same project
         // where the watch on props.project won't fire)
-        localName.value = store.getProjectDisplayName(props.project.id)
+        localName.value = props.project.name || ''
         localColor.value = props.project.color || ''
+        localArchived.value = props.project.archived || false
     }
     syncFormState()
     if (dialogRef.value) {
@@ -222,6 +226,7 @@ async function handleSave() {
                 body: JSON.stringify({
                     name: trimmedName || null,
                     color: localColor.value || null,
+                    archived: localArchived.value,
                 }),
             })
         } catch (error) {
@@ -317,6 +322,15 @@ defineExpose({
 
         <!-- Footer buttons -->
         <div slot="footer" class="dialog-footer">
+            <wa-switch
+                v-if="!isCreateMode"
+                :checked="localArchived"
+                @change="localArchived = $event.target.checked"
+                size="small"
+                class="footer-archived-switch"
+            >
+                Archived
+            </wa-switch>
             <wa-button variant="neutral" appearance="outlined" @click="close" :disabled="isSaving">
                 Cancel
             </wa-button>
@@ -396,5 +410,11 @@ defineExpose({
     display: flex;
     gap: var(--wa-space-s);
     justify-content: flex-end;
+    width: 100%;
+    align-items: center;
+}
+
+.footer-archived-switch {
+    margin-right: auto;
 }
 </style>

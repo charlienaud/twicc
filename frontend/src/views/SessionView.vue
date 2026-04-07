@@ -796,7 +796,7 @@ function registerSessionCommands() {
             action: () => {
                 store.deleteDraftSession(sessionId.value)
                 if (isAllProjectsMode.value) {
-                    router.push({ name: 'projects-all' })
+                    router.push({ name: 'projects-all', query: route.query.workspace ? { workspace: route.query.workspace } : {} })
                 } else {
                     router.push({ name: 'project', params: { projectId: projectId.value } })
                 }
