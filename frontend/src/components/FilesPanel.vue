@@ -553,7 +553,7 @@ async function revealFile(absolutePath, { lineNum = null } = {}) {
     // and scrolling to the target
     const found = await fileTreePanelRef.value?.scrollToPath(absolutePath)
 
-    // Check if the file is already selected (same path) — no fetch needed
+    // Check if the file is already selected (same path) — will need a reload
     const alreadySelected = selectedAbsPath.value === absolutePath
 
     // Always select the file so FilePane attempts to load it.
@@ -565,7 +565,9 @@ async function revealFile(absolutePath, { lineNum = null } = {}) {
     // Scroll to the requested line (default: top of file)
     const targetLine = lineNum ?? 1
     if (alreadySelected) {
-        // File already loaded — scroll immediately after a tick
+        // File already selected — reload from backend to avoid stale content,
+        // then scroll after the fetch completes.
+        await filePaneRef.value?.reload()
         await nextTick()
         filePaneRef.value?.scrollToLine(targetLine)
     } else {
