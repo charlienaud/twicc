@@ -5,6 +5,8 @@
  * Shows "..." when collapsed, with visual feedback on hover.
  * In simplified mode, this replaces collapsed group content.
  */
+import CodeCommentsIndicator from './CodeCommentsIndicator.vue'
+
 defineProps({
     /**
      * Whether the group is currently expanded.
@@ -21,11 +23,11 @@ defineProps({
         default: 0
     },
     /**
-     * Whether any tool in this group has code comments.
+     * Number of code comments in this group's tools.
      */
-    hasComments: {
-        type: Boolean,
-        default: false,
+    commentsCount: {
+        type: Number,
+        default: 0,
     },
 })
 
@@ -48,7 +50,7 @@ function handleClick() {
                 <span class="toggle-label-text">
                     {{ expanded ? 'Hide' : 'View' }} {{ itemCount }} element{{ itemCount !== 1 ? 's' : '' }}
                 </span>
-                <wa-icon v-if="hasComments" name="comment" variant="regular" class="toggle-comments-indicator"></wa-icon>
+                <CodeCommentsIndicator :count="commentsCount" :show-tooltip="false" class="toggle-comments-indicator" />
             </span>
         </wa-switch>
     </div>
@@ -108,7 +110,6 @@ wa-switch {
 }
 
 .toggle-comments-indicator {
-    color: var(--wa-color-brand);
     font-size: 0.8em;
     margin-left: 0.25em;
 }

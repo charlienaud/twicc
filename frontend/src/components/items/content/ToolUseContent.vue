@@ -2,6 +2,7 @@
 import { computed, ref, inject, provide, watch, watchEffect, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCodeCommentsStore } from '../../../stores/codeComments'
+import CodeCommentsIndicator from '../../CodeCommentsIndicator.vue'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
 import { apiFetch } from '../../../utils/api'
@@ -775,10 +776,10 @@ const taskDisplayName = computed(() => {
 const agentLink = computed(() => dataStore.getAgentLink(props.sessionId, props.toolId))
 const agentId = computed(() => agentLink.value?.agentId)
 
-const agentHasComments = computed(() => {
-    if (!agentId.value) return false
+const agentCommentsCount = computed(() => {
+    if (!agentId.value) return 0
     return codeCommentsStore.getCommentsBySession(props.projectId, props.parentSessionId || props.sessionId)
-        .some(c => c.subagentSessionId === agentId.value)
+        .filter(c => c.subagentSessionId === agentId.value).length
 })
 
 const isAgentRunning = computed(() => {
@@ -794,11 +795,11 @@ const viewAgentButtonId = computed(() => `view-agent-${props.toolId}`)
 
 // Code comments indicator for Edit/Write tools
 const isEditOrWrite = computed(() => props.name === 'Edit' || props.name === 'Write')
-const toolHasComments = computed(() => {
-    if (!isEditOrWrite.value || !props.input?.file_path) return false
+const toolCommentsCount = computed(() => {
+    if (!isEditOrWrite.value || !props.input?.file_path) return 0
     const rootSessionId = props.parentSessionId || props.sessionId
     return codeCommentsStore.getCommentsBySession(props.projectId, rootSessionId)
-        .some(c => c.source === 'tool' && c.sourceRef === props.toolId)
+        .filter(c => c.source === 'tool' && c.sourceRef === props.toolId).length
 })
 
 /**
@@ -832,7 +833,7 @@ function navigateToSubagent() {
                         <span class="items-details-summary-description">{{ description }}</span>
                     </span>
                     <span v-else class="items-details-summary-description">{{ description }}</span>
-                    <wa-icon v-if="toolHasComments" name="comment" variant="regular" class="tool-comments-indicator"></wa-icon>
+                    <CodeCommentsIndicator :count="toolCommentsCount" :show-tooltip="false" class="tool-comments-indicator" />
                 </template>
                 <!-- Skill tool: show skill name, with namespace in quiet mode -->
                 <template v-else-if="skillDescription">
@@ -900,7 +901,7 @@ function navigateToSubagent() {
                     >
                         <wa-icon v-if="isAgentRunning" slot="start" name="robot" class="agent-running-icon"></wa-icon>
                         View Agent
-                        <wa-icon v-if="agentHasComments" slot="end" name="comment" variant="regular" class="agent-comments-indicator"></wa-icon>
+                        <CodeCommentsIndicator slot="end" :count="agentCommentsCount" :show-tooltip="false" class="agent-comments-indicator" />
                     </wa-button>
                 </template>
             </template>
@@ -1025,7 +1026,6 @@ wa-details.with-right-part {
             animation: pulse 1s ease-in-out infinite;
         }
         .agent-comments-indicator, .tool-comments-indicator {
-            color: var(--wa-color-brand);
             font-size: var(--wa-font-size-xs);
         }
         & > :not(wa-button):last-child {

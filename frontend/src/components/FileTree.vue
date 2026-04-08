@@ -38,6 +38,7 @@
 import { ref, computed, watch } from 'vue'
 import { apiFetch } from '../utils/api'
 import { getIconUrl, getFileIconId, getFolderIconId } from '../utils/fileIcons'
+import CodeCommentsIndicator from './CodeCommentsIndicator.vue'
 
 const props = defineProps({
     node: {
@@ -340,9 +341,9 @@ const gitBadge = computed(() => {
     return entry
 })
 
-const hasComment = computed(() => {
-    if (props.commentedPaths.size === 0) return false
-    return props.commentedPaths.has(nodePath.value)
+const commentCount = computed(() => {
+    if (props.commentedPaths.size === 0) return 0
+    return props.commentedPaths.has(nodePath.value) ? 1 : 0
 })
 </script>
 
@@ -379,7 +380,7 @@ const hasComment = computed(() => {
                 height="16"
             />
             <span class="node-name">{{ compact.displayName }}</span>
-            <wa-icon v-if="hasComment" name="comment" variant="regular" class="comment-badge"></wa-icon>
+            <CodeCommentsIndicator :count="commentCount" :show-tooltip="false" class="comment-badge" />
             <span v-if="gitBadge" class="git-badge" :class="gitBadge.cls">{{ gitBadge.letter }}</span>
         </div>
 
@@ -498,7 +499,6 @@ const hasComment = computed(() => {
 
 .comment-badge {
     flex-shrink: 0;
-    color: var(--wa-color-brand);
     font-size: 0.7em;
 }
 

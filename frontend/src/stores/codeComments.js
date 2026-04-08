@@ -97,6 +97,15 @@ export const useCodeCommentsStore = defineStore('codeComments', {
             return state.counts.byProject[projectId] || 0
         },
 
+        /** Count all comments across multiple projects. */
+        countByProjects: (state) => (projectIds) => {
+            let total = 0
+            for (const pid of projectIds) {
+                total += state.counts.byProject[pid] || 0
+            }
+            return total
+        },
+
         /** Count comments in a specific session. */
         countBySession: (state) => (projectId, sessionId) => {
             return state.counts.bySession[`${projectId}\0${sessionId}`] || 0

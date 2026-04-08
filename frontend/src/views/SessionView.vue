@@ -15,6 +15,7 @@ import GitPanel from '../components/GitPanel.vue'
 import TerminalPanel from '../components/TerminalPanel.vue'
 import AppTooltip from '../components/AppTooltip.vue'
 import ProcessIndicator from '../components/ProcessIndicator.vue'
+import CodeCommentsIndicator from '../components/CodeCommentsIndicator.vue'
 import { useCodeCommentsStore } from '../stores/codeComments'
 
 const route = useRoute()
@@ -194,29 +195,29 @@ const hasGitRepo = computed(() =>
     || !!store.getProject(session.value?.project_id)?.git_root
 )
 
-// Code comments indicators per tab
-const hasFilesComments = computed(() =>
-    codeCommentsStore.countBySource(projectId.value, sessionId.value, 'files') > 0
+// Code comments counts per tab
+const filesCommentsCount = computed(() =>
+    codeCommentsStore.countBySource(projectId.value, sessionId.value, 'files')
 )
-const hasGitComments = computed(() =>
-    codeCommentsStore.countBySource(projectId.value, sessionId.value, 'git') > 0
+const gitCommentsCount = computed(() =>
+    codeCommentsStore.countBySource(projectId.value, sessionId.value, 'git')
 )
-const hasChatComments = computed(() =>
+const chatCommentsCount = computed(() =>
     codeCommentsStore.getCommentsBySession(projectId.value, sessionId.value)
-        .some(c => c.source === 'tool' && !c.subagentSessionId)
+        .filter(c => c.source === 'tool' && !c.subagentSessionId).length
 )
-function hasAgentComments(agentSessionId) {
+function agentCommentsCount(agentSessionId) {
     return codeCommentsStore.getCommentsBySession(projectId.value, sessionId.value)
-        .some(c => c.subagentSessionId === agentSessionId)
+        .filter(c => c.subagentSessionId === agentSessionId).length
 }
 
-const activeTabHasComments = computed(() => {
+const activeTabCommentsCount = computed(() => {
     const tabId = activeTabId.value
-    if (tabId === 'main') return hasChatComments.value
-    if (tabId === 'files') return hasFilesComments.value
-    if (tabId === 'git') return hasGitComments.value
-    if (tabId.startsWith('agent-')) return hasAgentComments(tabId.replace('agent-', ''))
-    return false
+    if (tabId === 'main') return chatCommentsCount.value
+    if (tabId === 'files') return filesCommentsCount.value
+    if (tabId === 'git') return gitCommentsCount.value
+    if (tabId.startsWith('agent-')) return agentCommentsCount(tabId.replace('agent-', ''))
+    return 0
 })
 
 // Tabs state - computed from store (automatically updates when session changes)
@@ -832,7 +833,7 @@ onBeforeUnmount(() => {
             :session-id="sessionId"
             mode="session"
             :active-tab-label="activeTabLabel"
-            :active-tab-has-comments="activeTabHasComments"
+            :active-tab-comments-count="activeTabCommentsCount"
             :active-tab-process-state="activeTabProcessState"
         >
             <!-- Compact mode: tab navigation inside the header overlay -->
@@ -865,7 +866,7 @@ onBeforeUnmount(() => {
                             :class="{ 'drag-hover-pending': chatTabDragHover.isPending.value }"
                         >
                             Chat
-                            <wa-icon v-if="hasChatComments" slot="end" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
+                            <CodeCommentsIndicator slot="end" :count="chatCommentsCount" :show-tooltip="false" class="tab-comments-indicator" />
                             <wa-icon
                                 v-if="store.getPendingRequest(sessionId)"
                                 slot="end"
@@ -889,7 +890,7 @@ onBeforeUnmount(() => {
                                     :state="store.getProcessState(tab.agentId).state"
                                     size="small"
                                 />
-                                <wa-icon v-if="hasAgentComments(tab.agentId)" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
+                                <CodeCommentsIndicator :count="agentCommentsCount(tab.agentId)" :show-tooltip="false" class="tab-comments-indicator" />
                                 <span class="tab-close-icon" @click.stop="closeTab(tab.id)">
                                     <wa-icon name="xmark" label="Close tab"></wa-icon>
                                 </span>
@@ -903,7 +904,7 @@ onBeforeUnmount(() => {
                             @click="switchToTabAndCollapse('files')"
                         >
                             Files
-                            <wa-icon v-if="hasFilesComments" slot="end" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
+                            <CodeCommentsIndicator slot="end" :count="filesCommentsCount" :show-tooltip="false" class="tab-comments-indicator" />
                         </wa-button>
 
                         <wa-button
@@ -914,7 +915,7 @@ onBeforeUnmount(() => {
                             @click="switchToTabAndCollapse('git')"
                         >
                             Git
-                            <wa-icon v-if="hasGitComments" slot="end" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
+                            <CodeCommentsIndicator slot="end" :count="gitCommentsCount" :show-tooltip="false" class="tab-comments-indicator" />
                         </wa-button>
 
                         <wa-button
@@ -961,7 +962,7 @@ onBeforeUnmount(() => {
                     size="small"
                 >
                     Chat
-                    <wa-icon v-if="hasChatComments" slot="end" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
+                    <CodeCommentsIndicator slot="end" :count="chatCommentsCount" :show-tooltip="false" class="tab-comments-indicator" />
                     <wa-icon
                         v-if="store.getPendingRequest(sessionId)"
                         slot="end"
@@ -988,7 +989,7 @@ onBeforeUnmount(() => {
                                 :state="store.getProcessState(tab.agentId).state"
                                 size="small"
                             />
-                            <wa-icon v-if="hasAgentComments(tab.agentId)" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
+                            <CodeCommentsIndicator :count="agentCommentsCount(tab.agentId)" :show-tooltip="false" class="tab-comments-indicator" />
                             <span class="tab-close-icon" @click.stop="closeTab(tab.id)">
                                 <wa-icon name="xmark" label="Close tab"></wa-icon>
                             </span>
@@ -1005,7 +1006,7 @@ onBeforeUnmount(() => {
                     size="small"
                 >
                     Files
-                    <wa-icon v-if="hasFilesComments" slot="end" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
+                    <CodeCommentsIndicator slot="end" :count="filesCommentsCount" :show-tooltip="false" class="tab-comments-indicator" />
                 </wa-button>
             </wa-tab>
             <wa-tab v-if="hasGitRepo" slot="nav" panel="git">
@@ -1015,7 +1016,7 @@ onBeforeUnmount(() => {
                     size="small"
                 >
                     Git
-                    <wa-icon v-if="hasGitComments" slot="end" name="comment" variant="regular" class="tab-comments-indicator"></wa-icon>
+                    <CodeCommentsIndicator slot="end" :count="gitCommentsCount" :show-tooltip="false" class="tab-comments-indicator" />
                 </wa-button>
             </wa-tab>
             <wa-tab slot="nav" panel="terminal">
@@ -1183,7 +1184,6 @@ wa-tab::part(base) {
 }
 
 .tab-comments-indicator {
-    color: var(--wa-color-brand);
     font-size: var(--wa-font-size-xs);
     flex-shrink: 0;
 }

@@ -878,20 +878,21 @@ const blocksWithComments = computed(() => {
     return result.size > 0 ? result : null
 })
 
-/** Check if a conversation-mode block has comments. */
-function blockHasComments(blockId) {
-    return blocksWithComments.value?.has(blockId) ?? false
+/** Count comments in a conversation-mode block (1 if has comments, 0 otherwise). */
+function blockCommentsCount(blockId) {
+    return blocksWithComments.value?.has(blockId) ? 1 : 0
 }
 
-/** Check if any tool comment falls within a group's line number range. */
-function groupHasComments(groupHeadLineNum, groupTailLineNum) {
+/** Count tool comments that fall within a group's line number range. */
+function groupCommentsCount(groupHeadLineNum, groupTailLineNum) {
     const lineNums = commentedToolLineNums.value
-    if (!lineNums) return false
+    if (!lineNums) return 0
     const tail = groupTailLineNum ?? groupHeadLineNum
+    let count = 0
     for (const ln of lineNums) {
-        if (ln >= groupHeadLineNum && ln <= tail) return true
+        if (ln >= groupHeadLineNum && ln <= tail) count++
     }
-    return false
+    return count
 }
 
 /**
@@ -1371,7 +1372,7 @@ defineExpose({
                     <GroupToggle
                         :expanded="item.isExpanded"
                         :item-count="item.groupSize"
-                        :has-comments="groupHasComments(item.lineNum, item.groupTail)"
+                        :comments-count="groupCommentsCount(item.lineNum, item.groupTail)"
                         @toggle="toggleGroup(item.lineNum)"
                     />
                     <SessionItem
@@ -1401,7 +1402,7 @@ defineExpose({
                     :prefix-expanded="item.prefixExpanded || false"
                     :suffix-expanded="item.suffixExpanded || false"
                     :detail-toggle-for="item.detailToggleFor ?? null"
-                    :block-has-comments="item.detailToggleFor != null && blockHasComments(item.detailToggleFor)"
+                    :block-comments-count="item.detailToggleFor != null ? blockCommentsCount(item.detailToggleFor) : 0"
                     @toggle-suffix="toggleGroup(item.suffixGroupHead)"
                 />
             </template>

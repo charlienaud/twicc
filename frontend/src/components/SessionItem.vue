@@ -7,6 +7,7 @@ import ApiError from './items/ApiError.vue'
 import CustomTitle from './items/CustomTitle.vue'
 import UnknownEntry from './items/UnknownEntry.vue'
 import AppTooltip from './AppTooltip.vue'
+import CodeCommentsIndicator from './CodeCommentsIndicator.vue'
 
 const dataStore = useDataStore()
 
@@ -64,9 +65,9 @@ const props = defineProps({
         type: Number,
         default: null
     },
-    blockHasComments: {
-        type: Boolean,
-        default: false
+    blockCommentsCount: {
+        type: Number,
+        default: 0
     }
 })
 
@@ -122,7 +123,7 @@ function toggleJsonView() {
                 >
                     <wa-icon :name="isBlockDetailed ? 'compress' : 'expand'"></wa-icon>
                 </wa-button>
-                <wa-icon v-if="blockHasComments" name="comment" variant="regular" class="detail-toggle-comments"></wa-icon>
+                <CodeCommentsIndicator :count="blockCommentsCount" :show-tooltip="false" class="detail-toggle-comments" />
             </div>
             <AppTooltip v-if="showDetailToggle" :for="`detail-toggle-${sessionId}-${detailToggleFor}`">
                 {{ isBlockDetailed ? 'Show conversation' : 'Show details' }}
@@ -244,7 +245,6 @@ function toggleJsonView() {
 }
 
 .detail-toggle-comments {
-    color: var(--wa-color-brand);
     font-size: var(--wa-font-size-xs);
     scale: 1.6;
     transform-origin: center;

@@ -7,6 +7,7 @@ import { CONTEXT_MAX_LABELS, PROCESS_STATE, PROCESS_STATE_COLORS, PROCESS_STATE_
 import { killProcess } from '../composables/useWebSocket'
 import ProjectBadge from './ProjectBadge.vue'
 import ProcessIndicator from './ProcessIndicator.vue'
+import CodeCommentsIndicator from './CodeCommentsIndicator.vue'
 import ProcessDuration from './ProcessDuration.vue'
 import CostDisplay from './CostDisplay.vue'
 import AppTooltip from './AppTooltip.vue'
@@ -30,9 +31,9 @@ const props = defineProps({
         type: String,
         default: null
     },
-    activeTabHasComments: {
-        type: Boolean,
-        default: false
+    activeTabCommentsCount: {
+        type: Number,
+        default: 0
     },
     /**
      * Process state for the currently active subagent tab (if any).
@@ -375,7 +376,7 @@ defineExpose({
                         :state="activeTabProcessState.state"
                         size="small"
                     />
-                    <wa-icon v-if="activeTabHasComments" name="comment" variant="regular" class="compact-tab-comments-indicator"></wa-icon>
+                    <CodeCommentsIndicator :count="activeTabCommentsCount" :show-tooltip="false" class="compact-tab-comments-indicator" />
                 </span>
 
                 <h2 :id="`session-header-${sessionId}-title`">{{ displayName }}</h2>
@@ -606,7 +607,6 @@ defineExpose({
     box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) 0 0 var(--wa-color-brand-border-loud);
 }
 .compact-tab-comments-indicator {
-    color: var(--wa-color-brand);
     font-size: var(--wa-font-size-xs);
     margin-left: var(--wa-space-2xs);
 }

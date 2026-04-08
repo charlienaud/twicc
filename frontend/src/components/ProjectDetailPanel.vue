@@ -15,6 +15,7 @@ import { formatDate } from '../utils/date'
 import { SESSION_TIME_FORMAT } from '../constants'
 import ProjectBadge from './ProjectBadge.vue'
 import AggregatedProcessIndicator from './AggregatedProcessIndicator.vue'
+import CodeCommentsIndicator from './CodeCommentsIndicator.vue'
 import ProjectEditDialog from './ProjectEditDialog.vue'
 import WorkspaceManageDialog from './WorkspaceManageDialog.vue'
 import ActivitySparkline from './ActivitySparkline.vue'
@@ -166,6 +167,7 @@ function handleEditClick() {
                             />
                         </span>
                         <AppTooltip :for="`detail-sparkline-${projectId}`">{{ isWorkspaceMode ? 'Workspace' : 'Overall' }} activity (message turns per week)</AppTooltip>
+                        <CodeCommentsIndicator v-if="isWorkspaceMode" :project-ids="workspaceProjectIds" />
                         <AggregatedProcessIndicator v-if="isWorkspaceMode" :project-ids="workspaceProjectIds" size="small" />
                     </template>
                 </div>

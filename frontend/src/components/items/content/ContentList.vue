@@ -211,16 +211,16 @@ function toggleInternalGroup(startIndex) {
 }
 
 /** Whether the parent message's line number range contains any tool comments. */
-const parentRangeHasComments = computed(() => {
+const parentRangeCommentsCount = computed(() => {
     const rootSessionId = props.parentSessionId || props.sessionId
-    if (codeCommentsStore.countBySession(props.projectId, rootSessionId) === 0) return false
-    if (codeCommentsStore.countBySource(props.projectId, rootSessionId, 'tool') === 0) return false
+    if (codeCommentsStore.countBySession(props.projectId, rootSessionId) === 0) return 0
+    if (codeCommentsStore.countBySource(props.projectId, rootSessionId, 'tool') === 0) return 0
     const subagentId = props.parentSessionId ? props.sessionId : ''
     const comments = codeCommentsStore.getCommentsBySession(props.projectId, rootSessionId)
         .filter(c => c.source === 'tool' && c.toolLineNum != null && c.subagentSessionId === subagentId)
     const head = props.groupHead ?? props.lineNum
     const tail = props.groupTail ?? props.lineNum
-    return comments.some(c => c.toolLineNum >= head && c.toolLineNum <= tail)
+    return comments.filter(c => c.toolLineNum >= head && c.toolLineNum <= tail).length
 })
 </script>
 
@@ -231,7 +231,7 @@ const parentRangeHasComments = computed(() => {
             v-if="entry.showToggleBefore && entry.toggleType === 'internal'"
             :expanded="entry.toggleExpanded"
             :item-count="entry.groupSize"
-            :has-comments="parentRangeHasComments"
+            :comments-count="parentRangeCommentsCount"
             @toggle="toggleInternalGroup(entry.groupStartIndex)"
         />
         <!-- Toggle for suffix (emits to parent for session-level handling) -->
@@ -239,7 +239,7 @@ const parentRangeHasComments = computed(() => {
             v-else-if="entry.showToggleBefore && entry.toggleType === 'suffix'"
             :expanded="entry.toggleExpanded"
             :item-count="entry.groupSize"
-            :has-comments="parentRangeHasComments"
+            :comments-count="parentRangeCommentsCount"
             @toggle="emit('toggle-suffix')"
         />
 
