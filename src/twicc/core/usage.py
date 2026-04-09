@@ -2,8 +2,8 @@
 Usage quota fetching and storage for Claude Code.
 
 Fetches usage data from the Anthropic OAuth usage API endpoint
-using credentials from ~/.claude/.credentials.json, and stores
-snapshots in the database.
+using credentials from ~/.claude/.credentials.json (or macOS
+Keychain), and stores snapshots in the database.
 
 Also provides cost estimation for quota periods by summing
 SessionItem costs within the relevant time windows.
@@ -11,6 +11,8 @@ SessionItem costs within the relevant time windows.
 
 import json
 import logging
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -34,45 +36,88 @@ USAGE_API_HEADERS = {
 # Credentials file path (cross-platform)
 CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 
+# macOS Keychain service name used by Claude Code
+KEYCHAIN_SERVICE = "Claude Code-credentials"
+
+
+def _read_credentials_data() -> dict | None:
+    """
+    Read the credentials JSON from the best available source.
+
+    Tries the credentials file first. If the file does not exist and
+    the platform is macOS, falls back to the macOS Keychain via the
+    ``security`` CLI.
+
+    Returns:
+        The parsed credentials dict, or None if unavailable.
+    """
+    # Source 1: credentials file (all platforms)
+    if CREDENTIALS_PATH.is_file():
+        try:
+            return json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to read credentials file: %s", e)
+            return None
+
+    # Source 2: macOS Keychain (only when file not found)
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except FileNotFoundError:
+            logger.warning("security command not found")
+            return None
+        except subprocess.TimeoutExpired:
+            logger.warning("Keychain credential lookup timed out")
+            return None
+
+        if result.returncode != 0:
+            logger.warning("No credentials found in macOS Keychain")
+            return None
+
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            logger.warning("Failed to parse Keychain credentials: %s", e)
+            return None
+
+    return None
+
 
 def has_oauth_credentials() -> bool:
     """
     Check whether OAuth credentials are configured.
 
-    Returns True if the credentials file exists and contains a
-    claudeAiOauth entry (regardless of whether the token is valid).
+    Returns True if credentials are available (from file or macOS
+    Keychain) and contain a claudeAiOauth entry (regardless of
+    whether the token is valid).
     """
-    if not CREDENTIALS_PATH.is_file():
+    data = _read_credentials_data()
+    if data is None:
         return False
-
-    try:
-        data = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return False
-
     return bool(data.get("claudeAiOauth"))
 
 
 def _get_access_token() -> str | None:
     """
-    Read the OAuth access token from ~/.claude/.credentials.json.
+    Read the OAuth access token from credentials.
+
+    Tries the credentials file first, then macOS Keychain.
 
     Returns:
         The access token string, or None if not found.
     """
-    if not CREDENTIALS_PATH.is_file():
-        logger.warning("Credentials file not found: %s", CREDENTIALS_PATH)
-        return None
-
-    try:
-        data = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Failed to read credentials file: %s", e)
+    data = _read_credentials_data()
+    if data is None:
         return None
 
     token = data.get("claudeAiOauth", {}).get("accessToken")
     if not token:
-        logger.warning("No OAuth access token found in credentials file")
+        logger.warning("No OAuth access token found in credentials")
         return None
 
     return token
