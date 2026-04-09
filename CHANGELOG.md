@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Bump `claude-agent-sdk` from 0.1.56 to 0.1.58 (bundled Claude Code CLI: 2.1.92 → 2.1.97)
 - Improve windowed burn rates in usage tooltips and graphs: remove misleading smoothed rate, add cross-period calculation for early-window accuracy, rename to "Burn rate (last X)", and add 6h/12h range options to the graph
 - Add permanent install instructions (`uv tool install twicc`) to the README alongside the existing `uvx` quick start
 - Auto-focus the terminal when switching to the terminal tab, and auto-focus the message input when switching to the chat tab via keyboard navigation
@@ -96,7 +97,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - ![Reorganized settings panel](frontend/public/whats-new/v1.3/settings-panel.webp)
 - File tree: typing a letter jumps to the next same-level entry starting with that letter
 - Remove toast notification for 15-minute user inactivity timeout
-- Bump `claude-agent-sdk` from 0.1.48 to 0.1.58 (bundled Claude Code CLI: 2.1.71 → 2.1.97)
+- Bump `claude-agent-sdk` from 0.1.48 to 0.1.56 (bundled Claude Code CLI: 2.1.71 → 2.1.92)
 
 ### Fixed
 
