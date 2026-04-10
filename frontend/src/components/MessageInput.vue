@@ -7,6 +7,7 @@ import { useSettingsStore, classifyClaudeSettingsChanges } from '../stores/setti
 import { sendWsMessage, notifyUserDraftUpdated } from '../composables/useWebSocket'
 import { isSupportedMimeType, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, draftMediaToMediaItem } from '../utils/fileUtils'
 import { toast } from '../composables/useToast'
+import { vPopoverFocusFix } from '../directives/vPopoverFocusFix'
 import { PERMISSION_MODE, PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS, MODEL, MODEL_LABELS, EFFORT, EFFORT_LABELS, EFFORT_DISPLAY_LABELS, THINKING_LABELS, THINKING_DISPLAY_LABELS, CLAUDE_IN_CHROME_LABELS, CLAUDE_IN_CHROME_DISPLAY_LABELS, CONTEXT_MAX, CONTEXT_MAX_LABELS } from '../constants'
 import { useCodeCommentsStore, formatAllComments } from '../stores/codeComments'
 import { getParsedContent } from '../utils/parsedContent'
@@ -185,6 +186,7 @@ function resetAllToDefaults() {
 }
 
 // Restore dropdowns to their active (saved) values, discarding unsaved changes
+
 function restoreSettings() {
     selectedModel.value = activeModel.value
     selectedPermissionMode.value = activePermissionMode.value
@@ -1338,6 +1340,7 @@ defineExpose({ insertTextAtCursor })
                         :open="showAttachTooltip || undefined"
                     >{{ attachTooltipText }}</wa-tooltip>
                     <wa-popover
+                        v-popover-focus-fix
                         :for="`attachments-popover-trigger-${sessionId}`"
                         placement="top"
                         class="attachments-popover"
@@ -1374,6 +1377,7 @@ defineExpose({ insertTextAtCursor })
                     <wa-icon name="gear"></wa-icon><span class="settings-summary"><template v-for="(part, i) in settingsSummaryParts" :key="i"><span v-if="i"> · </span><span v-if="part.forced" class="setting-forced">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></span>
                 </wa-button>
                 <wa-popover
+                    v-popover-focus-fix
                     :for="settingsButtonId"
                     placement="top"
                     class="settings-popover"

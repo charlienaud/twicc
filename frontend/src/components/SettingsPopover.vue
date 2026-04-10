@@ -10,6 +10,7 @@ import NotificationSettings from './NotificationSettings.vue'
 import AppTooltip from './AppTooltip.vue'
 import ChangelogDialog from './ChangelogDialog.vue'
 import { sendChangelogSeen } from '../composables/useWebSocket'
+import { vPopoverFocusFix } from '../directives/vPopoverFocusFix'
 
 const router = useRouter()
 const store = useSettingsStore()
@@ -431,7 +432,7 @@ function onChangelogClose() {
         <wa-icon name="gear"></wa-icon><span>Settings</span>
     </wa-button>
     <AppTooltip for="settings-trigger">Toggle settings</AppTooltip>
-    <wa-popover for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
+    <wa-popover v-popover-focus-fix for="settings-trigger" placement="top" class="settings-popover" @wa-show="onPopoverShow">
         <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
         <div class="settings-layout">
             <div class="settings-layout-inner" :class="{ 'showing-content': mobileShowContent }">
