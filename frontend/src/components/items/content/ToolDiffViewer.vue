@@ -16,6 +16,10 @@ const props = defineProps({
     modified: { type: String, default: '' },
     /** File path for language detection */
     filePath: { type: String, default: null },
+    /** Line number map for the original side (patch-only mode). */
+    originalLineMap: { type: Array, default: null },
+    /** Line number map for the modified side (patch-only mode). */
+    modifiedLineMap: { type: Array, default: null },
 })
 
 const toolContext = inject('codeCommentToolContext', null)
@@ -132,6 +136,8 @@ function openSearch() {
                     :collapse-unchanged="true"
                     :panel-container="searchPanelEl"
                     :comment-context="commentContext"
+                    :original-line-map="originalLineMap"
+                    :modified-line-map="modifiedLineMap"
                 />
                 <CodeEditor
                     v-else

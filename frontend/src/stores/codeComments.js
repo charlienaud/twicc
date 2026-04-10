@@ -197,8 +197,9 @@ export const useCodeCommentsStore = defineStore('codeComments', {
          * @param {Object} context - { projectId, sessionId, filePath, source, sourceRef }
          * @param {number} lineNumber
          * @param {string} [lineText]
+         * @param {number} [displayLineNumber] - Real file line number for message formatting (patch-only mode)
          */
-        addComment(context, lineNumber, lineText) {
+        addComment(context, lineNumber, lineText, displayLineNumber) {
             const commentData = {
                 projectId: context.projectId,
                 sessionId: context.sessionId,
@@ -209,6 +210,7 @@ export const useCodeCommentsStore = defineStore('codeComments', {
                 toolLineNum: context.toolLineNum ?? null,
                 subagentToolLineNum: context.subagentToolLineNum ?? null,
                 lineNumber,
+                displayLineNumber: displayLineNumber ?? null,
                 lineText: lineText ?? '',
                 content: '',
                 createdAt: Date.now(),
@@ -326,7 +328,8 @@ export function formatComment(comment) {
     const lang = getLanguageFromPath(comment.filePath) || ''
     const fence = makeFence(comment.lineText)
     const quotedComment = comment.content.split('\n').map(line => `> ${line}`).join('\n')
-    return `\n---\nComment on **\`${comment.filePath}\`** line ${comment.lineNumber}:\n${fence}${lang}\n${comment.lineText}\n${fence}\n\n${quotedComment}`
+    const line = comment.displayLineNumber ?? comment.lineNumber
+    return `\n---\nComment on **\`${comment.filePath}\`** line ${line}:\n${fence}${lang}\n${comment.lineText}\n${fence}\n\n${quotedComment}`
 }
 
 /**

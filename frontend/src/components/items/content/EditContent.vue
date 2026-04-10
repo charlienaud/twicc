@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { applyStructuredPatch } from '../../../utils/patchUtils'
+import { applyStructuredPatch, reconstructFromHunks } from '../../../utils/patchUtils'
 import ToolDiffViewer from './ToolDiffViewer.vue'
 
 /**
@@ -80,7 +80,11 @@ const props = defineProps({
  * Priority:
  * 1. If originalFile + backendPatch available (extras loaded):
  *    original = originalFile, modified = applyStructuredPatch(originalFile, patch)
- * 2. Fallback: original = old_string, modified = new_string (fragment only)
+ *    → full-file diff with smartCollapseUnchanged
+ * 2. If backendPatch available without originalFile:
+ *    reconstruct original/modified from hunks with real line numbers
+ *    → patch-only diff with ellipsis separators
+ * 3. Fallback: original = old_string, modified = new_string (fragment only)
  */
 const diffData = computed(() => {
     // Subagent: always use raw fragment without padding
@@ -90,7 +94,7 @@ const diffData = computed(() => {
         return { original: oldStr, modified: newStr }
     }
 
-    // Main session: try full-file mode first, then padded fragment
+    // Main session: try full-file mode first
     if (props.originalFile != null && props.backendPatch) {
         const modified = applyStructuredPatch(props.originalFile, props.backendPatch)
         if (modified != null) {
@@ -99,7 +103,15 @@ const diffData = computed(() => {
                 modified,
             }
         }
-        // applyPatch failed — fall through to fragment mode
+        // applyPatch failed — fall through
+    }
+
+    // Patch-only mode: reconstruct from hunks (real line numbers, more context)
+    if (props.backendPatch) {
+        const reconstructed = reconstructFromHunks(props.backendPatch)
+        if (reconstructed) {
+            return reconstructed
+        }
     }
 
     // Fragment mode: use old_string / new_string directly.
@@ -123,6 +135,8 @@ const showSpinner = computed(() => props.backendPatchLoading && !props.backendPa
                 :original="diffData.original"
                 :modified="diffData.modified"
                 :file-path="input.file_path"
+                :original-line-map="diffData.originalLineMap || null"
+                :modified-line-map="diffData.modifiedLineMap || null"
             />
         </template>
     </div>

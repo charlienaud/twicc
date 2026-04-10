@@ -10,13 +10,14 @@
 
 <script setup>
 import { ref, nextTick, watch, inject, onMounted, onBeforeUnmount } from 'vue'
-import { EditorView, keymap, panels } from '@codemirror/view'
+import { EditorView, keymap, lineNumbers, panels } from '@codemirror/view'
 import { EditorSelection } from '@codemirror/state'
 import { MergeView, unifiedMergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge'
 import { openSearchPanel, getSearchQuery, setSearchQuery, searchPanelOpen, SearchQuery } from '@codemirror/search'
 import { resolveLanguage, useCodeMirrorExtensions, useSettingsWatcher, toggleSearchPanel } from '../composables/useCodeMirror'
 import { createCodeCommentsExtension, syncCommentsEffect } from '../extensions/codeComments'
 import { smartCollapseUnchanged } from '../extensions/smartCollapseUnchanged'
+import { patchEllipsis } from '../extensions/patchEllipsis'
 import { useSettingsStore } from '../stores/settings'
 import { useCodeCommentsStore, formatComment, formatAllComments } from '../stores/codeComments'
 
@@ -39,6 +40,10 @@ const props = defineProps({
     panelContainer: { type: Object, default: null },
     /** Comment context for inline annotations. Null = comments disabled. */
     commentContext: { type: Object, default: null },
+    /** Line number map for the original side (patch-only mode). null entries = ellipsis separators. */
+    originalLineMap: { type: Array, default: null },
+    /** Line number map for the modified side (patch-only mode). null entries = ellipsis separators. */
+    modifiedLineMap: { type: Array, default: null },
 })
 
 // ─── Emits ───────────────────────────────────────────────────────────────────
@@ -95,19 +100,48 @@ const cmB = useCodeMirrorExtensions({
 // main thread on pathological inputs.
 const diffConfig = { scanLimit: 10000, timeout: 2000 }
 
-/** Build the smart collapse extension array (empty if collapse is disabled). */
-function buildCollapseExtension() {
+/** Whether we're in patch-only mode (have line maps but no full file). */
+const isPatchOnly = () => !!(props.originalLineMap || props.modifiedLineMap)
+
+/**
+ * Build a lineNumbers extension with formatNumber that maps doc line numbers
+ * to real file line numbers using a lineMap.  null entries show empty string
+ * (the ellipsis widget already covers the separator visually).
+ */
+function buildLineNumbers(lineMap) {
+    if (!lineMap) return lineNumbers()
+    return lineNumbers({
+        formatNumber: (docLineNumber) => {
+            const realLine = lineMap[docLineNumber - 1]
+            return realLine == null ? '' : String(realLine)
+        },
+    })
+}
+
+/**
+ * Build the collapse/ellipsis extension array.
+ * - Full-file mode: smartCollapseUnchanged (interactive expand/collapse)
+ * - Patch-only mode: patchEllipsis (static "···" separators at null lineMap entries)
+ * - Collapse disabled: empty
+ */
+function buildCollapseOrEllipsis(lineMap) {
     if (!props.collapseUnchanged) return []
+    if (lineMap) return [patchEllipsis(lineMap)]
     return [smartCollapseUnchanged({ margin: 3, minSize: 4, step: props.collapseStep })]
 }
 
 function buildCommentExtension() {
     if (!props.commentContext) return []
     const ctx = props.commentContext
+    const lineMap = props.modifiedLineMap
     const existingComments = codeCommentsStore.getCommentsForContext(ctx)
     return createCodeCommentsExtension({
         initialComments: existingComments.map(c => ({ lineNumber: c.lineNumber, content: c.content, lineText: c.lineText || '' })),
-        onAdd: (lineNumber, lineText) => codeCommentsStore.addComment(ctx, lineNumber, lineText),
+        onAdd: (lineNumber, lineText) => {
+            // In patch-only mode, translate doc line to real file line for display
+            const displayLineNumber = lineMap ? (lineMap[lineNumber - 1] ?? null) : null
+            codeCommentsStore.addComment(ctx, lineNumber, lineText, displayLineNumber)
+        },
         onUpdate: (lineNumber, content) => codeCommentsStore.updateComment(ctx, lineNumber, content),
         onRemove: (lineNumber) => codeCommentsStore.removeComment(ctx, lineNumber),
         onAddToMessage: insertTextAtCursor ? (lineNumber) => {
@@ -228,7 +262,7 @@ async function createSideBySideView() {
         ...cmA.extensions,
         panelsExt,
         ...(langExtension ? [langExtension] : []),
-        ...buildCollapseExtension(),
+        ...buildCollapseOrEllipsis(props.originalLineMap),
         ...props.extensions,
     ]
 
@@ -240,7 +274,7 @@ async function createSideBySideView() {
         saveKeymap,
         updateListener,
         ...buildCommentExtension(),
-        ...buildCollapseExtension(),
+        ...buildCollapseOrEllipsis(props.modifiedLineMap),
         ...props.extensions,
     ]
 
@@ -253,6 +287,18 @@ async function createSideBySideView() {
         mergeControls: false,
         diffConfig,
     })
+
+    // In patch-only mode, reconfigure line numbers to show real file line numbers
+    if (props.originalLineMap) {
+        currentView.a.dispatch({
+            effects: cmA.lineNumbersCompartment.reconfigure(buildLineNumbers(props.originalLineMap)),
+        })
+    }
+    if (props.modifiedLineMap) {
+        currentView.b.dispatch({
+            effects: cmB.lineNumbersCompartment.reconfigure(buildLineNumbers(props.modifiedLineMap)),
+        })
+    }
 
     currentMode = 'side-by-side'
 
@@ -284,7 +330,7 @@ async function createUnifiedView() {
         saveKeymap,
         updateListener,
         ...buildCommentExtension(),
-        ...buildCollapseExtension(),
+        ...buildCollapseOrEllipsis(props.modifiedLineMap),
         ...props.extensions,
     ]
 
@@ -294,6 +340,13 @@ async function createUnifiedView() {
         parent: diffEl.value,
         root: document, // Force styles into document head, not WA shadow root
     })
+
+    // In patch-only mode, reconfigure line numbers to show real file line numbers
+    if (props.modifiedLineMap) {
+        currentView.dispatch({
+            effects: cmB.lineNumbersCompartment.reconfigure(buildLineNumbers(props.modifiedLineMap)),
+        })
+    }
 
     currentMode = 'unified'
 
