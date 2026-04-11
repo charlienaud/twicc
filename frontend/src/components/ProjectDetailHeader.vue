@@ -3,6 +3,10 @@
 // Shows project/workspace name, sparkline, process indicator, edit button,
 // directory path, meta info (sessions count, cost, last activity),
 // and manages the edit/manage dialogs.
+//
+// On small viewports (max-height: 900px), collapses to a single compact row
+// with a chevron to expand the full details as an overlay — same pattern as
+// SessionHeader.vue.
 
 import { ref, computed } from 'vue'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
@@ -120,6 +124,16 @@ const weeklyActivity = computed(() => {
     return store.weeklyActivity[props.projectId] || []
 })
 
+// Project IDs for indicators (unified for all modes)
+const indicatorProjectIds = computed(() => {
+    if (isSingleProjectMode.value) return [props.projectId]
+    if (isWorkspaceMode.value) return workspaceProjectIds.value
+    return []
+})
+
+// Compact mode state
+const isCompactExpanded = ref(false)
+
 // Edit dialog ref (single project only)
 const editDialogRef = ref(null)
 // Workspace manage dialog ref
@@ -135,45 +149,47 @@ function handleEditClick() {
 </script>
 
 <template>
-    <header class="detail-header">
-        <!-- Title row: project/workspace name + process indicator + edit button -->
+    <header class="detail-header" :class="{ 'compact-expanded': isCompactExpanded, 'compact-collapsed': !isCompactExpanded }">
+        <!-- Title row -->
         <div class="detail-title-row">
-            <!-- Single project mode -->
-            <template v-if="isSingleProjectMode">
-                <ProjectBadge :project-id="projectId" class="detail-title" />
-                <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline">
-                    <ActivitySparkline
-                        :id-suffix="`${projectId}-detail`"
-                        :data="weeklyActivity"
-                    />
-                </span>
-                <AppTooltip :for="`detail-sparkline-${projectId}`">Project activity (message turns per week)</AppTooltip>
-                <AggregatedProcessIndicator :project-ids="[projectId]" size="small" />
-            </template>
-            <!-- Workspace or All Projects mode -->
-            <template v-else>
-                <h2 class="detail-title all-projects-title">
-                    <wa-icon v-if="isWorkspaceMode" name="layer-group" auto-width :style="workspace?.color ? { color: workspace.color } : null"></wa-icon>
-                    {{ displayName }}
-                </h2>
-                <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline">
-                    <ActivitySparkline
-                        :id-suffix="`${projectId}-detail`"
-                        :data="weeklyActivity"
-                    />
-                </span>
-                <AppTooltip :for="`detail-sparkline-${projectId}`">{{ isWorkspaceMode ? 'Workspace' : 'Overall' }} activity (message turns per week)</AppTooltip>
-                <CodeCommentsIndicator v-if="isWorkspaceMode" :project-ids="workspaceProjectIds" />
-                <AggregatedProcessIndicator v-if="isWorkspaceMode" :project-ids="workspaceProjectIds" size="small" />
-            </template>
+            <!-- Clickable zone for compact toggle -->
+            <div class="compact-toggle-zone" @click="isCompactExpanded = !isCompactExpanded">
+                <!-- Single project mode -->
+                <template v-if="isSingleProjectMode">
+                    <ProjectBadge :project-id="projectId" class="detail-title" />
+                </template>
+                <!-- Workspace or All Projects mode -->
+                <template v-else>
+                    <h2 class="detail-title all-projects-title">
+                        <wa-icon v-if="isWorkspaceMode" name="layer-group" auto-width :style="workspace?.color ? { color: workspace.color } : null"></wa-icon>
+                        {{ displayName }}
+                    </h2>
+                </template>
 
+                <!-- Compact-only indicators (visible only in compact collapsed mode) -->
+                <span v-if="!isAllProjectsMode" class="compact-indicator">
+                    <CodeCommentsIndicator :project-ids="indicatorProjectIds" />
+                </span>
+                <span v-if="!isAllProjectsMode" class="compact-indicator">
+                    <AggregatedProcessIndicator :project-ids="indicatorProjectIds" size="small" />
+                </span>
+
+                <!-- Compact chevron -->
+                <wa-icon
+                    class="compact-toggle-chevron"
+                    :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'"
+                    label="Toggle details"
+                ></wa-icon>
+            </div>
+
+            <!-- Edit/manage button (always visible) -->
             <wa-button
                 v-if="!isAllProjectsMode"
                 id="detail-edit-button"
                 variant="neutral"
                 appearance="plain"
                 size="small"
-                class="edit-button"
+                class="edit-button reduced-height"
                 @click="handleEditClick"
             >
                 <wa-icon :name="isWorkspaceMode ? 'gear' : 'pencil'"></wa-icon>
@@ -182,33 +198,51 @@ function handleEditClick() {
             <AppTooltip v-else-if="isSingleProjectMode" for="detail-edit-button">Edit project (name and color)</AppTooltip>
         </div>
 
-        <!-- Directory (single project only) -->
-        <div v-if="isSingleProjectMode && directory" class="detail-directory">
-            <wa-icon name="folder" class="detail-icon"></wa-icon>
-            <span>{{ directory }}</span>
-        </div>
-
-        <!-- Meta info -->
-        <div class="detail-meta">
-            <div id="detail-sessions-count" class="detail-meta-item">
-                <wa-icon name="folder-open" class="detail-icon" variant="regular"></wa-icon>
-                <span>{{ sessionsCount }} session{{ sessionsCount !== 1 ? 's' : '' }}</span>
-            </div>
-            <AppTooltip for="detail-sessions-count">Number of sessions</AppTooltip>
-
-            <template v-if="showCosts">
-                <CostDisplay id="detail-cost" :cost="totalCost" class="detail-meta-item" />
-                <AppTooltip for="detail-cost">Total cost</AppTooltip>
-            </template>
-
-            <div v-if="mtime" id="detail-mtime" class="detail-meta-item">
-                <wa-icon name="clock" class="detail-icon" variant="regular"></wa-icon>
-                <span>
-                    <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
-                    <template v-else>{{ formatDate(mtime) }}</template>
+        <!-- Collapsible rows: sparkline, directory, meta (overlay on small viewports) -->
+        <div class="detail-collapsible-rows">
+            <!-- Sparkline -->
+            <div class="detail-sparkline-row">
+                <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline">
+                    <ActivitySparkline
+                        :id-suffix="`${projectId}-detail`"
+                        :data="weeklyActivity"
+                    />
                 </span>
+                <AppTooltip :for="`detail-sparkline-${projectId}`">{{ isWorkspaceMode ? 'Workspace' : isAllProjectsMode ? 'Overall' : 'Project' }} activity (message turns per week)</AppTooltip>
+
+                <!-- Full-size indicators (hidden in compact mode, shown on large viewports) -->
+                <CodeCommentsIndicator v-if="!isAllProjectsMode" :project-ids="indicatorProjectIds" class="full-indicator" />
+                <AggregatedProcessIndicator v-if="!isAllProjectsMode" :project-ids="indicatorProjectIds" size="small" class="full-indicator" />
             </div>
-            <AppTooltip v-if="mtime" for="detail-mtime">{{ useRelativeTime ? `Last activity: ${formatDate(mtime)}` : 'Last activity' }}</AppTooltip>
+
+            <!-- Directory (single project only) -->
+            <div v-if="isSingleProjectMode && directory" class="detail-directory">
+                <wa-icon name="folder" class="detail-icon"></wa-icon>
+                <span>{{ directory }}</span>
+            </div>
+
+            <!-- Meta info -->
+            <div class="detail-meta">
+                <div id="detail-sessions-count" class="detail-meta-item">
+                    <wa-icon name="folder-open" class="detail-icon" variant="regular"></wa-icon>
+                    <span>{{ sessionsCount }} session{{ sessionsCount !== 1 ? 's' : '' }}</span>
+                </div>
+                <AppTooltip for="detail-sessions-count">Number of sessions</AppTooltip>
+
+                <template v-if="showCosts">
+                    <CostDisplay id="detail-cost" :cost="totalCost" class="detail-meta-item" />
+                    <AppTooltip for="detail-cost">Total cost</AppTooltip>
+                </template>
+
+                <div v-if="mtime" id="detail-mtime" class="detail-meta-item">
+                    <wa-icon name="clock" class="detail-icon" variant="regular"></wa-icon>
+                    <span>
+                        <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
+                        <template v-else>{{ formatDate(mtime) }}</template>
+                    </span>
+                </div>
+                <AppTooltip v-if="mtime" for="detail-mtime">{{ useRelativeTime ? `Last activity: ${formatDate(mtime)}` : 'Last activity' }}</AppTooltip>
+            </div>
         </div>
 
         <!-- Edit dialog (single project only) -->
@@ -224,6 +258,7 @@ function handleEditClick() {
     flex-direction: column;
     gap: var(--wa-space-m);
     padding-inline: var(--wa-space-m);
+    position: relative;
 }
 
 .detail-title-row {
@@ -235,18 +270,52 @@ function handleEditClick() {
 
 .detail-title {
     font-weight: 600;
-    font-size: var(--wa-font-size-xl);
     min-width: 0;
 }
 
 .all-projects-title {
     margin: 0;
     color: var(--wa-color-text-normal);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: var(--wa-font-size-l);
 }
 
 .edit-button {
     flex-shrink: 0;
     margin-left: auto;
+}
+
+/* Compact toggle zone: transparent on large viewports */
+.compact-toggle-zone {
+    display: contents;
+}
+
+/* Compact chevron: hidden by default */
+.compact-toggle-chevron {
+    display: none;
+    flex-shrink: 0;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+    font-size: var(--wa-font-size-xs);
+    align-self: center;
+}
+
+/* Compact-only indicators: hidden by default (shown only in compact collapsed mode) */
+.compact-indicator {
+    display: none;
+}
+
+.detail-sparkline-row {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-m);
+}
+
+/* Collapsible rows: transparent wrapper on large viewports */
+.detail-collapsible-rows {
+    display: contents;
 }
 
 .detail-directory {
@@ -268,6 +337,7 @@ function handleEditClick() {
     display: flex;
     flex-wrap: wrap;
     gap: var(--wa-space-m);
+    padding-bottom: var(--wa-space-s);
 }
 
 .detail-meta-item {
@@ -280,5 +350,95 @@ function handleEditClick() {
 
 .detail-sparkline {
     flex-shrink: 0;
+}
+
+@media (max-height: 900px) {
+    /* Show chevron */
+    .compact-toggle-chevron {
+        display: inline-flex;
+    }
+
+    /* Make toggle zone a clickable flex row */
+    .compact-toggle-zone {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-s);
+        min-width: 0;
+        cursor: pointer;
+        flex: 1;
+    }
+
+    .compact-toggle-zone:hover .compact-toggle-chevron {
+        opacity: 1;
+    }
+
+    /* In compact collapsed mode: show compact indicators, hide full indicators */
+    .detail-header.compact-collapsed .compact-indicator {
+        display: inline-flex;
+    }
+
+    .detail-header.compact-collapsed {
+        border-bottom: solid var(--wa-color-surface-border) 4px;
+        gap: 0;
+        padding-block: 0; 
+        padding-inline: var(--wa-space-xs);
+    }
+
+    /* Hide full indicators in compact mode (they live inside the collapsible rows) */
+    .detail-header.compact-collapsed .full-indicator {
+        display: none;
+    }
+
+    /* Collapsible rows become an overlay panel */
+    .detail-collapsible-rows {
+        display: flex;
+        flex-direction: column;
+        gap: var(--wa-space-m);
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 20;
+        background: var(--wa-color-surface-default);
+        box-shadow: var(--wa-shadow-s);
+        border-bottom: solid var(--wa-color-surface-border) 4px;
+
+        /* Hidden by default */
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-8px);
+        transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+    }
+
+    /* When expanded: reveal the overlay */
+    .detail-header.compact-expanded .detail-collapsible-rows {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+    }
+
+    /* When expanded: hide compact indicators, show full indicators */
+    .detail-header.compact-expanded .compact-indicator {
+        display: none;
+    }
+
+    .detail-header.compact-expanded .full-indicator {
+        display: inline-flex;
+    }
+
+    .detail-title-row {
+        padding-block: var(--wa-space-xs);
+    }
+
+    .detail-meta {
+        padding-bottom: 0;
+    }
+    .detail-sparkline-row {
+        padding-top: var(--wa-space-s);
+    }
+
+    .detail-meta, .detail-sparkline-row {
+        padding-inline: var(--wa-space-m);
+    }
 }
 </style>

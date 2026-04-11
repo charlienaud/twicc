@@ -53,4 +53,10 @@ const workspaceProjectIds = computed(() =>
     min-height: 0;
     padding-bottom: 3rem;
 }
+
+@media (max-height: 900px) {
+    .project-detail-panel {
+        padding-top: 0;
+    }
+}
 </style>
