@@ -31,6 +31,11 @@ const props = defineProps({
         type: String,
         required: true,
     },
+    /** Label of the currently active tab (e.g., "Stats"). Shown in compact collapsed mode. */
+    activeTabLabel: {
+        type: String,
+        default: null,
+    },
 })
 
 const store = useDataStore()
@@ -134,6 +139,8 @@ const indicatorProjectIds = computed(() => {
 // Compact mode state
 const isCompactExpanded = ref(false)
 
+defineExpose({ isCompactExpanded })
+
 // Edit dialog ref (single project only)
 const editDialogRef = ref(null)
 // Workspace manage dialog ref
@@ -154,6 +161,9 @@ function handleEditClick() {
         <div class="detail-title-row">
             <!-- Clickable zone for compact toggle -->
             <div class="compact-toggle-zone" @click="isCompactExpanded = !isCompactExpanded">
+                <!-- Active tab label: shown only in compact collapsed mode -->
+                <span v-if="activeTabLabel" class="compact-active-tab-label">{{ activeTabLabel }}</span>
+
                 <!-- Single project mode -->
                 <template v-if="isSingleProjectMode">
                     <ProjectBadge :project-id="projectId" class="detail-title" />
@@ -243,6 +253,9 @@ function handleEditClick() {
                 </div>
                 <AppTooltip v-if="mtime" for="detail-mtime">{{ useRelativeTime ? `Last activity: ${formatDate(mtime)}` : 'Last activity' }}</AppTooltip>
             </div>
+
+            <!-- Slot for extra compact-mode content (e.g. tab nav from ProjectDetailPanel) -->
+            <slot name="compact-extra"></slot>
         </div>
 
         <!-- Edit dialog (single project only) -->
@@ -305,6 +318,21 @@ function handleEditClick() {
 /* Compact-only indicators: hidden by default (shown only in compact collapsed mode) */
 .compact-indicator {
     display: none;
+}
+
+/* Active tab label: hidden by default, shown in compact collapsed mode */
+.compact-active-tab-label {
+    display: none;
+    font-size: var(--wa-font-size-s);
+    font-weight: 700;
+    color: var(--wa-color-brand-on-quiet);
+    flex-shrink: 0;
+    border-color: var(--wa-color-brand-border-loud);
+    border-radius: var(--wa-form-control-border-radius);
+    border-style: var(--wa-border-style);
+    border-width: var(--wa-border-width-s);
+    padding: var(--wa-space-2xs) var(--wa-space-xs);
+    box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) 0 0 var(--wa-color-brand-border-loud);
 }
 
 .detail-sparkline-row {
@@ -380,8 +408,20 @@ function handleEditClick() {
     .detail-header.compact-collapsed {
         border-bottom: solid var(--wa-color-surface-border) 4px;
         gap: 0;
-        padding-block: 0; 
+        padding-block: 0;
         padding-inline: var(--wa-space-xs);
+    }
+
+    /* In compact collapsed mode: show active tab label */
+    .detail-header.compact-collapsed .compact-active-tab-label {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--wa-space-2xs);
+    }
+
+    /* In compact expanded mode: hide active tab label */
+    .detail-header.compact-expanded .compact-active-tab-label {
+        display: none;
     }
 
     /* Hide full indicators in compact mode (they live inside the collapsible rows) */
