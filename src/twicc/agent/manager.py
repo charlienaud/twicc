@@ -193,11 +193,11 @@ class ProcessManager:
                             self._pending_after_restart[session_id] = {
                                 "text": text, "images": images, "documents": documents,
                             }
-                        # kill() triggers _on_state_change(DEAD) synchronously:
+                        # _on_state_change(DEAD) fires once DEAD is reached:
                         # - if has_crons: launches cron restart task (which will
                         #   also send pending text after success)
                         # - cleans up process from _processes
-                        await process.kill(reason="apply-settings")
+                        await process.interrupt_or_kill(reason="apply-settings")
                         if will_restart:
                             # Broadcast "starting" so the frontend blocks interaction
                             await self._broadcast_process_state(
@@ -409,15 +409,17 @@ class ProcessManager:
         return process.get_info()
 
     async def kill_process(self, session_id: str, reason: str = "manual") -> bool:
-        """Kill a specific process by session ID.
+        """Stop a specific process by session ID.
 
-        This terminates the process gracefully. Processes in any state except DEAD
-        can be killed - this includes USER_TURN since the process still consumes
-        memory even when idle.
+        Tries to interrupt the CLI gracefully first (so it can finalize JSONL
+        writes), then falls back to an OS-level kill if that doesn't work.
+
+        Processes in any state except DEAD can be stopped - this includes
+        USER_TURN since the process still consumes memory even when idle.
 
         Args:
-            session_id: The session identifier of the process to kill
-            reason: Reason for killing (e.g., "manual", "timeout")
+            session_id: The session identifier of the process to stop
+            reason: Reason for stopping (e.g., "manual", "timeout")
 
         Returns:
             True if a process was killed, False if not found or already dead
@@ -437,9 +439,9 @@ class ProcessManager:
                 return False
 
             logger.info(
-                "Killing process for session %s (reason: %s)", session_id, reason
+                "Stopping process for session %s (reason: %s)", session_id, reason
             )
-            await process.kill(reason=reason)
+            await process.interrupt_or_kill(reason=reason)
             return True
 
     async def stop_agent(self, session_id: str, agent_id: str) -> bool:
@@ -551,36 +553,21 @@ class ProcessManager:
                 "Shutting down %d active Claude processes", len(self._processes)
             )
 
-            # Create kill tasks for all processes
-            kill_tasks = [
+            # Interrupt all processes (with kill fallback), in parallel
+            shutdown_tasks = [
                 asyncio.create_task(
-                    process.kill(reason="shutdown"), name=f"kill-{session_id}"
+                    process.interrupt_or_kill(reason="shutdown"),
+                    name=f"shutdown-{session_id}",
                 )
                 for session_id, process in self._processes.items()
             ]
 
-            if kill_tasks:
-                # Wait for all kills with timeout
+            if shutdown_tasks:
                 done, pending = await asyncio.wait(
-                    kill_tasks,
-                    timeout=timeout,
-                    return_when=asyncio.ALL_COMPLETED,
+                    shutdown_tasks, timeout=timeout,
                 )
-
-                # Cancel any that didn't finish in time
                 for task in pending:
                     task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-
-                if pending:
-                    logger.warning(
-                        "%d processes did not terminate within %ss timeout",
-                        len(pending),
-                        timeout,
-                    )
 
             # Clear all processes
             self._processes.clear()
@@ -1051,8 +1038,7 @@ class ProcessManager:
             has_crons = await self._session_has_crons(process)
             has_pending = process.session_id in self._pending_after_restart
             will_restart = has_crons or has_pending
-            # kill() triggers _on_state_change(DEAD) synchronously
-            await process.kill(reason="apply-settings")
+            await process.interrupt_or_kill(reason="apply-settings")
             if will_restart:
                 await self._broadcast_process_state(
                     process.session_id, process.project_id, ProcessState.STARTING,

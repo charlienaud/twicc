@@ -154,6 +154,8 @@ class ClaudeProcess:
         self.kill_reason: str | None = None
 
         self._client: ClaudeSDKClient | None = None
+        self._interrupting = False  # Set when interrupt() is called, suppresses error toast
+        self._dead_event = asyncio.Event()  # Set when state transitions to DEAD
         self._message_loop_task: asyncio.Task[None] | None = None
         self._state_change_callback: StateChangeCallback | None = None
         self._pending_request: PendingRequest | None = None
@@ -198,6 +200,8 @@ class ClaudeProcess:
         self.previous_state = old_state
         self.state = new_state
         self.state_changed_at = time.time()
+        if new_state == ProcessState.DEAD:
+            self._dead_event.set()
         logger.debug(
             "State transition for session %s: %s -> %s",
             self.session_id,
@@ -900,6 +904,64 @@ class ClaudeProcess:
         )
         await self._client.stop_task(agent_id)
 
+    async def interrupt(self) -> None:
+        """Send an interrupt signal to the CLI (equivalent to Ctrl+C).
+
+        Sets the _interrupting flag so the message loop handles the resulting
+        error response gracefully (clean DEAD state, no error toast).
+
+        Raises:
+            RuntimeError: If the process is not started
+        """
+        if self._client is None:
+            raise RuntimeError("Process not started")
+
+        self._interrupting = True
+        logger.info("Interrupting session %s", self.session_id)
+        await self._client.interrupt()
+
+    async def wait_for_dead(self, timeout: float = 30.0) -> bool:
+        """Wait for the process to reach DEAD state.
+
+        Args:
+            timeout: Maximum seconds to wait
+
+        Returns:
+            True if the process is dead, False if timeout expired
+        """
+        try:
+            await asyncio.wait_for(self._dead_event.wait(), timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    async def interrupt_or_kill(self, reason: str) -> None:
+        """Try to interrupt the process gracefully, fall back to kill.
+
+        When the process is actively working (ASSISTANT_TURN, STARTING), sends
+        an interrupt signal so the CLI can finalize JSONL writes. When idle
+        (USER_TURN), kills directly since there's nothing to interrupt.
+
+        Args:
+            reason: Reason for stopping (e.g., "manual", "apply-settings")
+        """
+        if self.state in (ProcessState.ASSISTANT_TURN, ProcessState.STARTING):
+            try:
+                self.kill_reason = reason
+                await self.interrupt()
+                if await self.wait_for_dead():
+                    return
+                logger.debug(
+                    "Interrupt timeout for session %s, falling back to kill",
+                    self.session_id,
+                )
+            except Exception:
+                logger.debug(
+                    "Interrupt failed for session %s, falling back to kill",
+                    self.session_id,
+                )
+        await self.kill(reason=reason)
+
     async def set_model(self, sdk_model: str | None) -> None:
         """Change the AI model on the live SDK client.
 
@@ -1108,6 +1170,23 @@ class ClaudeProcess:
                 if isinstance(msg, ResultMessage):
                     # Claude finished responding, ready for user input
                     if msg.is_error:
+                        if self._interrupting:
+                            # Expected error after interrupt — clean shutdown.
+                            # kill_reason is already set by interrupt_or_kill().
+                            # No self.error = avoids the error toast on the frontend.
+                            logger.info(
+                                "Session %s interrupted cleanly (subtype=%s)",
+                                self.session_id,
+                                msg.subtype,
+                            )
+                            self._cancel_pending_request_future()
+                            self._set_state(ProcessState.DEAD)
+                            self.last_activity = time.time()
+                            self._first_turn_done_event.set()
+                            await self._notify_state_change()
+                            self._client = None
+                            return
+
                         # Log full ResultMessage details for debugging
                         logger.error(
                             "Claude error for session %s: result=%r, subtype=%s, "
