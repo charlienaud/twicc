@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
 import orjson
@@ -36,14 +36,43 @@ logger = logging.getLogger(__name__)
 StateChangeCallback = Callable[["ClaudeProcess"], Coroutine[Any, Any, None]]
 
 
-async def _dummy_hook(input_data: dict, tool_use_id: str, context: Any) -> dict:
-    """SDK PreToolUse hook required to keep the stream open for can_use_tool callbacks.
+async def _pre_tool_use_hook(input_data: dict, tool_use_id: str, context: Any) -> dict:
+    """SDK PreToolUse hook: captures original file content before Edit/Write tools.
 
-    The Python SDK requires at least one PreToolUse hook registered for the
-    can_use_tool callback to fire during streaming mode. This hook approves
-    all tool uses unconditionally (actual permission logic is in can_use_tool).
+    Also serves as the required PreToolUse hook that keeps the stream open for
+    can_use_tool callbacks (the SDK requires at least one PreToolUse hook registered
+    for can_use_tool to fire during streaming mode).
     """
+    tool_name = input_data.get("tool_name", "")
+    if tool_name in ("Edit", "Write"):
+        _capture_original_file(input_data, tool_use_id)
     return {"continue_": True}
+
+
+def _capture_original_file(input_data: dict, tool_use_id: str) -> None:
+    """Read and cache a file's content before it gets modified by Edit/Write."""
+    from twicc.agent.original_file_cache import MAX_FILE_SIZE, cache_original_file
+
+    tool_input = input_data.get("tool_input", {})
+    file_path = tool_input.get("file_path")
+    if not file_path:
+        return
+
+    session_id = input_data.get("session_id", "")
+    if not session_id:
+        return
+
+    try:
+        path = Path(file_path)
+        if not path.is_file():
+            return
+        size = path.stat().st_size
+        if size > MAX_FILE_SIZE:
+            return
+        content = path.read_text(encoding="utf-8")
+        cache_original_file(session_id, tool_use_id, content)
+    except Exception:
+        logger.debug("Failed to cache original file %s for tool_use %s", file_path, tool_use_id, exc_info=True)
 
 
 # Type aliases for cron change callbacks
@@ -762,7 +791,7 @@ class ClaudeProcess:
                 plugins=[{"type": "local", "path": str(get_plugin_dir())}],
                 can_use_tool=self._handle_pending_request,
                 hooks={
-                    "PreToolUse": [HookMatcher(matcher=None, hooks=[_dummy_hook])],
+                    "PreToolUse": [HookMatcher(matcher=None, hooks=[_pre_tool_use_hook])],
                     "PostToolUse": [HookMatcher(matcher="CronCreate|CronDelete", hooks=[_on_cron_tool])],
                 },
                 stderr=self._log_stderr,

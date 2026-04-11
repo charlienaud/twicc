@@ -63,6 +63,7 @@ from twicc.slash_commands_task import start_slash_commands_task, stop_slash_comm
 from twicc.search import init_search_index, shutdown_search_index  # noqa: E402
 from twicc.search_indexing_task import start_search_index_task, stop_search_index_task  # noqa: E402
 from twicc.version_check_task import start_version_check_task, stop_version_check_task  # noqa: E402
+from twicc.agent.original_file_cache import start_cleanup_task as start_original_file_cache_cleanup, stop_cleanup_task as stop_original_file_cache_cleanup  # noqa: E402
 
 
 def _count_total_sessions() -> int:
@@ -242,6 +243,7 @@ async def run_server(port: int):
     version_check_task = asyncio.create_task(start_version_check_task())
     statuspage_task = asyncio.create_task(start_statuspage_task())
     slash_commands_task = asyncio.create_task(start_slash_commands_task())
+    original_file_cache_task = asyncio.create_task(start_original_file_cache_cleanup())
 
     # Configure uvicorn
     # log_config=None prevents Uvicorn from installing its own StreamHandlers;
@@ -317,6 +319,10 @@ async def run_server(port: int):
         logger.info("Stopping slash commands task...")
         stop_slash_commands_task()
         await _cancel_task(slash_commands_task, "Slash commands task")
+
+        # Clean shutdown of original file cache cleanup task
+        stop_original_file_cache_cleanup()
+        await _cancel_task(original_file_cache_task, "Original file cache cleanup")
 
         # Clean shutdown of search index task (may not have started yet)
         if deferred["search_indexing_task"] is not None:

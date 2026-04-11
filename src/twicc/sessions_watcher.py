@@ -18,6 +18,7 @@ from django.conf import settings
 from watchfiles import Change, awatch
 
 import twicc.search as search
+from twicc.agent.original_file_cache import pop_original_file as _pop_cached_original_file
 from twicc.compute import AgentLinkUpdate, AgentStoppedUpdate, ToolResultUpdate, cache_agent_prompt, \
     check_agent_naturally_stopped, compute_item_cost_and_usage, \
     compute_item_metadata, \
@@ -25,7 +26,7 @@ from twicc.compute import AgentLinkUpdate, AgentStoppedUpdate, ToolResultUpdate,
     create_agent_link_from_tool_use, create_tool_result_link_live, ensure_project_directory, ensure_project_git_root, \
     extract_item_timestamp, \
     extract_text_from_content, extract_title_from_user_message, get_cached_agent_prompt, get_message_content, \
-    get_project_directory, get_project_git_root, is_agent_link_done, \
+    get_project_directory, get_project_git_root, get_tool_result_id, is_agent_link_done, \
     is_tool_result_item, load_project_directories, \
     load_project_git_roots, read_head_branch, resolve_git_from_path, \
     transform_local_command_output, transform_task_notification, \
@@ -592,6 +593,39 @@ async def start_watcher() -> None:
                 logger.exception("Error processing watcher change %s on %s", change_type, path_str)
 
 
+def _inject_cached_original_file(parsed: dict, session_id: str, line_num: int) -> str | None:
+    """Inject a cached originalFile into a tool_result that lacks one.
+
+    If the tool_result has a toolUseResult with no originalFile and we have a
+    cached copy from the PreToolUse hook, inject it and return the re-serialized
+    JSON string.  Otherwise return None (no change needed).
+    """
+    tool_use_result = parsed.get('toolUseResult')
+    if not isinstance(tool_use_result, dict):
+        return None
+
+    tool_use_id = get_tool_result_id(parsed)
+    if not tool_use_id:
+        return None
+
+    # Always pop from cache (consume the entry whether we use it or not)
+    cached = _pop_cached_original_file(session_id, tool_use_id)
+
+    if cached is None:
+        return None
+
+    # Already has originalFile — no injection needed
+    if tool_use_result.get('originalFile') is not None:
+        return None
+
+    tool_use_result['originalFile'] = cached
+    logger.debug(
+        "Injected cached originalFile into tool_result (session=%s, line=%d, tool_use_id=%s, size=%d)",
+        session_id, line_num, tool_use_id, len(cached),
+    )
+    return orjson.dumps(parsed).decode('utf-8')
+
+
 @sync_to_async
 def sync_session_items(
     session: Session, file_path: Path
@@ -720,6 +754,17 @@ def sync_session_items(
 
         if new_content is not None:
             item.content = new_content
+
+        # Inject cached originalFile into Edit/Write tool_results that lack it.
+        # The PreToolUse hook captures file contents before the tool modifies them;
+        # here we inject that cached content so the frontend gets full-file diffs.
+        if is_tool_result_item(parsed):
+            try:
+                injected_content = _inject_cached_original_file(parsed, session.id, current_line_num)
+                if injected_content is not None:
+                    item.content = injected_content
+            except Exception:
+                logger.exception("Failed to inject cached originalFile (session=%s, line=%d)", session.id, current_line_num)
 
         # Pre-compute display_level (no group info yet)
         metadata = compute_item_metadata(parsed)
