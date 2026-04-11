@@ -1367,22 +1367,23 @@ function handleTextSelectionScroll() {
 }
 
 /**
- * On selectionchange (fired when the user drags mobile selection handles, or
- * adjusts the selection in any way), update the stored text and button position.
+ * On selectionchange, detect or update the text selection comment.
+ * Always active (via onMounted) so that mobile long-press selections are
+ * detected — mobile browsers don't reliably fire mouseup for text selection.
  */
 function handleSelectionChange() {
-    // Don't update while the panel is expanded (user is typing their comment)
     if (textSelectionCommentRef.value?.isExpanded) return
 
     const selection = window.getSelection()
     const text = selection?.toString()?.trim()
+
     if (!text) {
-        closeTextSelectionComment()
+        if (textSelectionPosition.value) closeTextSelectionComment()
         return
     }
 
     if (!isSelectionInSessionContent(selection)) {
-        closeTextSelectionComment()
+        if (textSelectionPosition.value) closeTextSelectionComment()
         return
     }
 
@@ -1390,20 +1391,26 @@ function handleSelectionChange() {
     const pos = getSelectionPosition()
     if (pos) {
         textSelectionPosition.value = pos
-    } else {
+    } else if (textSelectionPosition.value) {
         closeTextSelectionComment()
     }
 }
 
-// Attach/detach scroll + selectionchange listeners when the floating widget is shown/hidden
+// selectionchange is always active (needed for mobile initial detection).
+// The scroll listener is only active when the widget is visible.
+onMounted(() => {
+    document.addEventListener('selectionchange', handleSelectionChange)
+})
+onBeforeUnmount(() => {
+    document.removeEventListener('selectionchange', handleSelectionChange)
+})
+
 watch(textSelectionPosition, (pos, oldPos) => {
     const el = scrollerRef.value?.$el
     if (pos && !oldPos) {
         el?.addEventListener('scroll', handleTextSelectionScroll, { passive: true })
-        document.addEventListener('selectionchange', handleSelectionChange)
     } else if (!pos && oldPos) {
         el?.removeEventListener('scroll', handleTextSelectionScroll)
-        document.removeEventListener('selectionchange', handleSelectionChange)
     }
 })
 
