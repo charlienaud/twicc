@@ -22,15 +22,15 @@ const expanded = ref(false)
 const commentText = ref('')
 const textareaRef = ref(null)
 const rootRef = ref(null)
+const isDragging = ref(false)
 
-// Pixel offsets applied after measuring the expanded panel to keep it within the viewport.
-const positionAdjust = ref({ dx: 0, dy: 0 })
+// Combined pixel offset (drag + clamp corrections) from the base position.
+const panelOffset = ref({ dx: 0, dy: 0 })
 
 const rootStyle = computed(() => {
     const base = { top: props.position.top + 'px', left: props.position.left + 'px' }
     if (expanded.value) {
-        // Override the CSS transform with clamped offsets
-        const { dx, dy } = positionAdjust.value
+        const { dx, dy } = panelOffset.value
         base.transform = `translate(calc(-50% + ${dx}px), calc(4px + ${dy}px))`
     }
     return base
@@ -38,9 +38,11 @@ const rootStyle = computed(() => {
 
 const canAdd = computed(() => !!commentText.value.trim() && !!insertTextAtCursor)
 
+// ─── Viewport clamping ─────────────────────────────────────────────
+
 /**
- * After the panel renders, measure its bounding rect and nudge it so it stays
- * fully visible inside the viewport (with an 8 px margin on every side).
+ * Measure the panel's rendered rect and nudge it back into the visible viewport.
+ * Adds a correction delta to the current panelOffset (preserves user drag).
  * Uses visualViewport when available so it accounts for the mobile keyboard.
  */
 function clampToViewport() {
@@ -51,22 +53,23 @@ function clampToViewport() {
     const margin = 8
     const vv = window.visualViewport
     const vw = vv?.width ?? window.innerWidth
-    // visualViewport.offsetTop + height gives the visible bottom edge in
-    // layout-viewport coordinates (same coordinate space as getBoundingClientRect).
     const vh = vv ? (vv.offsetTop + vv.height) : window.innerHeight
 
     let dx = 0
     let dy = 0
 
-    // Horizontal
     if (rect.left < margin) dx = margin - rect.left
     else if (rect.right > vw - margin) dx = (vw - margin) - rect.right
 
-    // Vertical
     if (rect.bottom > vh - margin) dy = (vh - margin) - rect.bottom
     if (rect.top + dy < margin) dy = margin - rect.top
 
-    positionAdjust.value = { dx, dy }
+    if (dx || dy) {
+        panelOffset.value = {
+            dx: panelOffset.value.dx + dx,
+            dy: panelOffset.value.dy + dy,
+        }
+    }
 }
 
 /** Re-clamp when the mobile keyboard opens/closes. */
@@ -74,8 +77,40 @@ function onVisualViewportResize() {
     if (expanded.value) clampToViewport()
 }
 
+// ─── Drag (via quote as handle) ────────────────────────────────────
+
+let dragStart = null
+
+function onDragPointerDown(e) {
+    // Only primary button / single touch
+    if (e.button !== 0) return
+    e.preventDefault()
+    isDragging.value = true
+    dragStart = { x: e.clientX, y: e.clientY, ...panelOffset.value }
+    document.addEventListener('pointermove', onDragPointerMove)
+    document.addEventListener('pointerup', onDragPointerUp)
+}
+
+function onDragPointerMove(e) {
+    if (!dragStart) return
+    panelOffset.value = {
+        dx: dragStart.dx + (e.clientX - dragStart.x),
+        dy: dragStart.dy + (e.clientY - dragStart.y),
+    }
+}
+
+function onDragPointerUp() {
+    dragStart = null
+    isDragging.value = false
+    document.removeEventListener('pointermove', onDragPointerMove)
+    document.removeEventListener('pointerup', onDragPointerUp)
+    clampToViewport()
+}
+
+// ─── Expand / close ────────────────────────────────────────────────
+
 function expand() {
-    positionAdjust.value = { dx: 0, dy: 0 }
+    panelOffset.value = { dx: 0, dy: 0 }
     expanded.value = true
     window.visualViewport?.addEventListener('resize', onVisualViewportResize)
     nextTick(() => {
@@ -119,6 +154,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     document.removeEventListener('mousedown', handleDocumentMousedown, true)
+    document.removeEventListener('pointermove', onDragPointerMove)
+    document.removeEventListener('pointerup', onDragPointerUp)
     window.visualViewport?.removeEventListener('resize', onVisualViewportResize)
 })
 
@@ -147,8 +184,12 @@ defineExpose({ isExpanded: expanded })
 
         <!-- Expanded: comment panel -->
         <div v-else class="tsc-panel" @keydown="handleKeydown">
-            <!-- Selected text preview -->
-            <div class="tsc-quote">{{ selectedText }}</div>
+            <!-- Selected text preview (also serves as drag handle) -->
+            <div
+                class="tsc-quote"
+                :class="{ dragging: isDragging }"
+                @pointerdown="onDragPointerDown"
+            >{{ selectedText }}</div>
 
             <wa-textarea
                 ref="textareaRef"
@@ -219,6 +260,13 @@ defineExpose({ isExpanded: expanded })
     overflow: scroll;
     white-space: pre-wrap;
     word-break: break-word;
+    cursor: grab;
+    touch-action: none; /* prevent scroll while dragging on mobile */
+    user-select: none;
+}
+
+.tsc-quote.dragging {
+    cursor: grabbing;
 }
 
 /* ── Help text ───────────────────────────────────────────────────── */
