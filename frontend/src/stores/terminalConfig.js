@@ -17,9 +17,11 @@ export const useTerminalConfigStore = defineStore('terminalConfig', {
          * @returns {Function} (projectId: string, workspaceIds?: string[]) => Array
          */
         getSnippetsForProject: (state) => (projectId, workspaceIds = null) => {
-            const global = state.snippets.global || []
-            const wsSnippets = (workspaceIds || []).flatMap(wsId => state.snippets[`workspace:${wsId}`] || [])
-            const project = state.snippets[`project:${projectId}`] || []
+            const global = (state.snippets.global || []).map(s => ({ ...s, _scope: 'global' }))
+            const wsSnippets = (workspaceIds || []).flatMap(wsId =>
+                (state.snippets[`workspace:${wsId}`] || []).map(s => ({ ...s, _scope: `workspace:${wsId}` }))
+            )
+            const project = (state.snippets[`project:${projectId}`] || []).map(s => ({ ...s, _scope: `project:${projectId}` }))
             return [...global, ...wsSnippets, ...project]
         },
 

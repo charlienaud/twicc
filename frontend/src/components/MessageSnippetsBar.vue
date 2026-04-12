@@ -2,6 +2,8 @@
 // MessageSnippetsBar.vue - Displays message snippets as compact buttons below the textarea
 // Visual style mirrors the snippets tab in TerminalExtraKeysBar.vue
 import { useMessageSnippetsStore } from '../stores/messageSnippets'
+import { useDataStore } from '../stores/data'
+import { useWorkspacesStore } from '../stores/workspaces'
 import AppTooltip from './AppTooltip.vue'
 
 defineProps({
@@ -15,6 +17,22 @@ defineProps({
 const emit = defineEmits(['snippet-press', 'snippet-disabled-press', 'manage-snippets'])
 
 const messageSnippetsStore = useMessageSnippetsStore()
+const dataStore = useDataStore()
+const workspacesStore = useWorkspacesStore()
+
+function snippetScopeInfo(snippet) {
+    const scope = snippet._scope
+    if (!scope) return null
+    if (scope.startsWith('project:')) {
+        const project = dataStore.getProject(scope.slice(8))
+        return { type: 'project', color: project?.color || null }
+    }
+    if (scope.startsWith('workspace:')) {
+        const ws = workspacesStore.getWorkspaceById(scope.slice(10))
+        return { type: 'workspace', color: ws?.color || null }
+    }
+    return null
+}
 
 /** Display text for a snippet: label if set, otherwise truncated text (10 chars + ellipsis). */
 function snippetDisplayText(snippet) {
@@ -43,7 +61,22 @@ function handleSnippetClick(snippet) {
                     :class="{ 'snippet-disabled': snippet._disabled }"
                     :title="snippet.text"
                     @click="handleSnippetClick(snippet)"
-                >{{ snippetDisplayText(snippet) }}</button>
+                >
+                    <template v-if="snippetScopeInfo(snippet)?.type === 'project'">
+                        <span
+                            class="snippet-scope-dot"
+                            :style="snippetScopeInfo(snippet).color ? { '--dot-color': snippetScopeInfo(snippet).color } : null"
+                        ></span>
+                    </template>
+                    <template v-else-if="snippetScopeInfo(snippet)?.type === 'workspace'">
+                        <wa-icon
+                            name="layer-group"
+                            class="snippet-scope-icon"
+                            :style="snippetScopeInfo(snippet).color ? { color: snippetScopeInfo(snippet).color } : null"
+                        ></wa-icon>
+                    </template>
+                    {{ snippetDisplayText(snippet) }}
+                </button>
                 <AppTooltip v-if="snippet._disabled" :for="`disabled-msg-snippet-${i}`">
                     {{ snippet._disabledReason }}
                 </AppTooltip>
@@ -152,6 +185,9 @@ button {
     user-select: none;
     line-height: 1;
     padding: 0 var(--wa-space-xs);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
 }
 
 .snippet-btn:hover {
@@ -176,6 +212,23 @@ button {
 
 .snippet-btn.snippet-disabled:active {
     transform: none;
+}
+
+/* ── Scope indicators ────────────────────────────────────────────── */
+.snippet-scope-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1px solid;
+    box-sizing: border-box;
+    background-color: var(--dot-color, transparent);
+    border-color: var(--dot-color, var(--wa-color-border-quiet));
+}
+
+.snippet-scope-icon {
+    font-size: 0.7em;
+    flex-shrink: 0;
 }
 
 /* ── Empty text ──────────────────────────────────────────────────── */
