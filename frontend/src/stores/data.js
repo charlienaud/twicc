@@ -602,6 +602,13 @@ export const useDataStore = defineStore('data', {
                          prev.last_stopped_at !== session.last_stopped_at)) {
                 this._cleanStaleChildSynthetics(session)
             }
+            // Never let last_new_content_at regress — an optimistic value (set when
+            // process_state exits assistant_turn) can be overwritten by a stale
+            // session_updated broadcast from the file watcher.
+            if (prev?.last_new_content_at && session.last_new_content_at &&
+                session.last_new_content_at < prev.last_new_content_at) {
+                session = { ...session, last_new_content_at: prev.last_new_content_at }
+            }
             this.$patch({ sessions: { [session.id]: session } })
         },
         /**
