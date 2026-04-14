@@ -373,7 +373,7 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
 
         # Handle title update
         if "title" in data:
-            from twicc.titles import set_pending_title, validate_title, write_custom_title_to_jsonl
+            from twicc.titles import protect_title, rename_session_in_jsonl, validate_title
 
             title, error = validate_title(data["title"])
             if error:
@@ -390,19 +390,14 @@ def session_detail(request, project_id, session_id, parent_session_id=None):
                 except Exception:
                     pass  # Non-critical: search will catch up on next startup
 
-            # 3. Write to JSONL (immediate or deferred)
-            from twicc.agent.manager import get_process_manager
-            from twicc.agent.states import ProcessState
+            # 3. Write to JSONL via SDK (atomic append, safe at any time)
+            try:
+                rename_session_in_jsonl(session_id, title)
+            except Exception:
+                pass  # Non-critical: DB is already updated, watcher will sync
 
-            manager = get_process_manager()
-            process_info = manager.get_process_info(session_id)
-
-            if process_info and process_info.state in (ProcessState.STARTING, ProcessState.ASSISTANT_TURN):
-                # Process is busy, defer write
-                set_pending_title(session_id, title)
-            else:
-                # Safe to write immediately (no process, user_turn, or dead)
-                write_custom_title_to_jsonl(session_id, title)
+            # 4. Protect from CLI stale re-append
+            protect_title(session_id, title)
 
         # Handle archived update
         needs_broadcast = False

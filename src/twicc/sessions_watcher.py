@@ -919,12 +919,23 @@ def sync_session_items(
     if any(item.git_directory for item, _ in items_to_create) and get_project_git_root(session.project_id) is None:
         ensure_project_git_root(session.project_id)
 
-    # Apply title updates
+    # Apply title updates (with protection against CLI stale re-appends)
+    from twicc.titles import check_protected_title, rename_session_in_jsonl
+
     for target_session_id, title in session_title_updates.items():
-        Session.objects.filter(id=target_session_id).update(title=title)
-        # If updating the current session, update the object too
-        if target_session_id == session.id:
-            session.title = title
+        result = check_protected_title(target_session_id, title)
+        if result.should_apply:
+            Session.objects.filter(id=target_session_id).update(title=title)
+            if target_session_id == session.id:
+                session.title = title
+        elif result.correction:
+            # CLI wrote a stale title — re-write the correct one.
+            # This places the correct title at the end of the JSONL,
+            # so the CLI's next tail-scan will absorb it.
+            try:
+                rename_session_in_jsonl(target_session_id, result.correction)
+            except Exception:
+                pass  # Will retry on next stale entry
 
     # Update session tracking fields
     session.last_line = current_line_num

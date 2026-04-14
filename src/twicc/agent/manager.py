@@ -1140,21 +1140,36 @@ class ProcessManager:
             except Exception as e:
                 logger.error("Error applying pending settings for session %s: %s", process.session_id, e)
 
-        # Flush pending title when process becomes safe to write.
-        # We add a small delay to let Claude CLI finish flushing its own I/O
-        # buffers to the JSONL file — the ResultMessage arrives via the SDK stream
-        # before Claude CLI has necessarily finished writing to disk.
-        if state in (ProcessState.USER_TURN, ProcessState.DEAD):
-            from twicc.titles import flush_pending_title
+        # Flush pending title for draft→real sessions.
+        # On ASSISTANT_TURN, the CLI has created the JSONL file, so we can
+        # now write the title that was stored when the draft was sent.
+        if state == ProcessState.ASSISTANT_TURN:
+            from twicc.titles import get_pending_title, pop_pending_title, protect_title, rename_session_in_jsonl
 
-            try:
-                await asyncio.sleep(0.5)
-                await asyncio.to_thread(flush_pending_title, process.session_id)
-            except Exception as e:
-                logger.error("Error flushing pending title: %s", e)
+            pending = get_pending_title(process.session_id)
+            if pending:
+                try:
+                    await asyncio.to_thread(rename_session_in_jsonl, process.session_id, pending)
+                    pop_pending_title(process.session_id)
+                    protect_title(process.session_id, pending)
+                except Exception as e:
+                    logger.error("Error flushing pending title for session %s: %s", process.session_id, e)
 
         # Update last_stopped_at when process dies, and propagate to recent subagents
         if state == ProcessState.DEAD:
+            from twicc.titles import clear_protected_title, get_protected_title, rename_session_in_jsonl
+
+            # Re-write the user-set title at the end of the JSONL so the CLI's
+            # tail-scan finds it on the next resume (survives server restarts).
+            protected = get_protected_title(process.session_id)
+            if protected:
+                try:
+                    await asyncio.to_thread(rename_session_in_jsonl, process.session_id, protected)
+                except Exception as e:
+                    logger.warning("Failed to re-write title on DEAD for session %s: %s", process.session_id, e)
+
+            clear_protected_title(process.session_id)
+
             try:
                 from django.utils import timezone as dj_timezone
                 from twicc.core.models import Session
