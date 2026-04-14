@@ -159,11 +159,14 @@ export function notifyUserDraftUpdated(sessionId) {
 /**
  * Send a session_viewed message to the backend and update the store optimistically.
  * @param {string} sessionId - The session ID
+ * @param {string} reason - Why this notification is being sent (for debugging)
  */
-function _sendSessionViewed(sessionId) {
+function _sendSessionViewed(sessionId, reason) {
     sendWsMessage({
         type: 'session_viewed',
         session_id: sessionId,
+        viewed_at: new Date().toISOString(),
+        reason,
     })
     // Optimistic update: set last_viewed_at locally immediately
     const store = useDataStore()
@@ -182,18 +185,22 @@ function _sendSessionViewed(sessionId) {
  * fresh even when content arrives shortly after navigation.
  * @param {string} sessionId - The session ID
  */
-export function notifySessionViewed(sessionId) {
+export function notifySessionViewed(sessionId, reason) {
     if (!sessionId) return
 
     // Clear any cancellation from a previous mark-unread action
     __hmrState.cancelledViewedThrottles.delete(sessionId)
+
+    // Store the latest reason so the throttled callback can use it
+    __hmrState.lastViewedReason = __hmrState.lastViewedReason || {}
+    __hmrState.lastViewedReason[sessionId] = reason
 
     // Get or create throttled function for this session
     if (!__hmrState.throttledViewedNotifications.has(sessionId)) {
         const throttledFn = useThrottleFn(() => {
             // Skip if cancelled by mark-unread (trailing call after cancellation)
             if (__hmrState.cancelledViewedThrottles.has(sessionId)) return
-            _sendSessionViewed(sessionId)
+            _sendSessionViewed(sessionId, __hmrState.lastViewedReason?.[sessionId] || 'throttle-trailing')
         }, 30000, true) // 30s throttle, trailing=true (leading=true by default)
         __hmrState.throttledViewedNotifications.set(sessionId, throttledFn)
     }
@@ -208,7 +215,7 @@ export function notifySessionViewed(sessionId) {
  * is up to date before the session becomes visible in the sidebar as potentially unread.
  * @param {string} sessionId - The session ID
  */
-export function forceNotifySessionViewed(sessionId) {
+export function forceNotifySessionViewed(sessionId, reason) {
     if (!sessionId) return
     // Skip if cancelled by mark-unread (e.g. onDeactivated fires after mark-unread navigates away)
     if (__hmrState.cancelledViewedThrottles.has(sessionId)) return
@@ -218,7 +225,7 @@ export function forceNotifySessionViewed(sessionId) {
     // (whose timer is still alive inside useThrottleFn) is skipped when it fires.
     __hmrState.throttledViewedNotifications.delete(sessionId)
     __hmrState.cancelledViewedThrottles.add(sessionId)
-    _sendSessionViewed(sessionId)
+    _sendSessionViewed(sessionId, reason)
 }
 
 /**
@@ -346,7 +353,7 @@ function notifyProcessStateChange(msg, previousState, route) {
         // This prevents stale state if the user locks their phone or switches
         // apps before the trailing throttle call fires.
         if (isViewingSession) {
-            forceNotifySessionViewed(sessionId)
+            forceNotifySessionViewed(sessionId, 'process-user-turn')
         }
         // In-app toast when the user is on TwiCC but not viewing this session
         if (!isViewingSession && !__hmrState.activeUserTurnToasts.has(sessionId)) {
@@ -676,7 +683,7 @@ export function useWebSocket() {
                 // If user is currently viewing this session, mark as viewed (throttled
                 // with trailing edge, so last_viewed_at stays fresh as content arrives)
                 if (route.params.sessionId === msg.session_id) {
-                    notifySessionViewed(msg.session_id)
+                    notifySessionViewed(msg.session_id, 'items-added')
                 }
                 break
             case 'process_state': {

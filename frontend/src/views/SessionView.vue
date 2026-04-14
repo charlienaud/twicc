@@ -70,7 +70,7 @@ function restoreActiveTab() {
 
 onMounted(() => {
     // Mark session as viewed on first render
-    notifySessionViewed(sessionId.value)
+    notifySessionViewed(sessionId.value, 'mounted')
     // Listen for tab keyboard shortcuts (dispatched by App.vue)
     window.addEventListener('twicc:tab-shortcut', handleTabShortcut)
 })
@@ -94,7 +94,7 @@ onActivated(() => {
     restoreActiveTab()
 
     // Mark session as viewed when re-activated (KeepAlive navigation back)
-    notifySessionViewed(sessionId.value)
+    notifySessionViewed(sessionId.value, 'activated')
 })
 
 onDeactivated(() => {
@@ -103,7 +103,7 @@ onDeactivated(() => {
     // Force-send session_viewed to ensure last_viewed_at is fresh before leaving.
     // Without this, the throttle can cause last_viewed_at to be stale (set at navigation time)
     // while last_new_content_at was updated during viewing — making the session appear unread.
-    forceNotifySessionViewed(sessionId.value)
+    forceNotifySessionViewed(sessionId.value, 'deactivated')
 
     // Stop observing compact tab overflow
     stopCompactTabsObserver()

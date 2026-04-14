@@ -1281,7 +1281,9 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         Expected content format:
         {
             "type": "session_viewed",
-            "session_id": "claude-conv-xxx"
+            "session_id": "claude-conv-xxx",
+            "viewed_at": "2026-04-13T20:53:05.123Z",  // client timestamp
+            "reason": "deactivated"                     // why this was sent
         }
 
         Updates the session's last_viewed_at timestamp and broadcasts the change
@@ -1296,9 +1298,17 @@ class UpdatesConsumer(AsyncJsonWebsocketConsumer):
         from twicc.core.models import Session
         from twicc.core.serializers import serialize_session
 
+        now = timezone.now()
+        reason = content.get("reason", "unknown")
+        viewed_at = content.get("viewed_at", "N/A")
+        logger.debug(
+            "session_viewed for %s: reason=%s, front_viewed_at=%s, back_now=%s",
+            session_id, reason, viewed_at, now.isoformat(),
+        )
+
         rows = await sync_to_async(
             Session.objects.filter(id=session_id).update
-        )(last_viewed_at=timezone.now())
+        )(last_viewed_at=now)
         if not rows:
             return
 
