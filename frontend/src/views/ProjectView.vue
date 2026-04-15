@@ -382,8 +382,9 @@ function handleSelectorSelect(event) {
     if (!value) return
 
     if (value === ALL_PROJECTS_ID) {
-        // Clear workspace, go to all projects. Preserve session/sub-route if one is open.
-        if (sessionId.value && projectId.value) {
+        if (isAllProjectsMode.value && !activeWorkspaceId.value && sessionId.value) {
+            router.push({ name: 'projects-all', query: {} })
+        } else if (sessionId.value && projectId.value) {
             // Map single-project route names to all-projects equivalents
             let targetName = route.name
             if (!targetName.startsWith('projects-')) {
@@ -397,7 +398,9 @@ function handleSelectorSelect(event) {
         }
     } else if (value.startsWith('workspace:')) {
         const wsId = value.slice('workspace:'.length)
-        if (sessionId.value && projectId.value) {
+        if (activeWorkspaceId.value === wsId && sessionId.value) {
+            router.push({ name: 'projects-all', query: { workspace: wsId } })
+        } else if (sessionId.value && projectId.value) {
             const ws = workspacesStore.getWorkspaceById(wsId)
             if (ws?.projectIds.includes(projectId.value)) {
                 router.push({ name: 'projects-session', params: { projectId: projectId.value, sessionId: sessionId.value }, query: { workspace: wsId } })
@@ -413,12 +416,7 @@ function handleSelectorSelect(event) {
         router.push({ name: 'projects-all', query: { workspace: activeWorkspaceId.value } })
     } else {
         // Regular project selection — navigation guard handles workspace propagation
-        const targetProjectId = value
-        if (sessionId.value && projectId.value === targetProjectId) {
-            router.push({ name: 'session', params: { projectId: targetProjectId, sessionId: sessionId.value } })
-        } else {
-            router.push({ name: 'project', params: { projectId: targetProjectId } })
-        }
+        router.push({ name: 'project', params: { projectId: value } })
     }
 }
 
