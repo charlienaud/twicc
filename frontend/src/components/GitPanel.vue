@@ -376,6 +376,41 @@ const fileTreePanelRef = ref(null)
 /** Selected file relative path from the FileTreePanel. */
 const selectedFile = computed(() => fileTreePanelRef.value?.selectedFile ?? null)
 
+const GIT_STATUS_MAP = {
+    modified:  { letter: 'M', cls: 'git-badge-modified' },
+    added:     { letter: 'A', cls: 'git-badge-added' },
+    deleted:   { letter: 'D', cls: 'git-badge-deleted' },
+    renamed:   { letter: 'R', cls: 'git-badge-renamed' },
+    copied:    { letter: 'C', cls: 'git-badge-added' },
+    untracked: { letter: 'U', cls: 'git-badge-untracked' },
+}
+
+const selectedFileStatus = computed(() => {
+    const file = selectedFile.value
+    const tree = displayTree.value
+    if (!file || !tree) return null
+
+    const parts = file.split('/')
+    let node = tree
+    for (const part of parts) {
+        node = node.children?.find(c => c.name === part)
+        if (!node) return null
+    }
+    if (node.type !== 'file') return null
+
+    if (node.status) {
+        return GIT_STATUS_MAP[node.status] || { letter: node.status[0].toUpperCase(), cls: 'git-badge-modified' }
+    }
+
+    const primary = node.staged_status || node.unstaged_status
+    if (!primary) return null
+    const entry = GIT_STATUS_MAP[primary] || { letter: primary[0].toUpperCase(), cls: 'git-badge-modified' }
+    if (node.unstaged_status) {
+        return { letter: entry.letter, cls: entry.cls + ' git-badge-unstaged' }
+    }
+    return entry
+})
+
 /**
  * Search callback: filters the current tree client-side.
  * Uses the same fuzzy/exact search logic as the backend.
@@ -1033,70 +1068,81 @@ onMounted(() => {
 
                 <div ref="contentOwnerRef" class="reparent-owner">
                     <div class="git-content-inner">
-                        <!-- Diff error -->
-                        <div v-if="diffError" class="panel-placeholder">
-                            <wa-callout variant="danger" size="small">
-                                {{ diffError }}
-                            </wa-callout>
-                        </div>
+                        <!-- File path bar (desktop only) -->
+                        <template v-if="!isMobile && selectedFile">
+                            <div class="file-path-header">
+                                <span class="file-path-label">{{ selectedFile }}</span>
+                                <span v-if="selectedFileStatus" class="git-badge" :class="selectedFileStatus.cls">{{ selectedFileStatus.letter }}</span>
+                            </div>
+                            <wa-divider></wa-divider>
+                        </template>
 
-                        <!-- Binary image diff (both sides) -->
-                        <div v-else-if="diffData?.image && diffData.original && diffData.modified" class="image-diff-container">
-                            <wa-comparison>
-                                <img slot="before" :src="diffData.original" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
-                                <img slot="after" :src="diffData.modified" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
-                            </wa-comparison>
-                        </div>
+                        <!-- Content area (flex:1 so absolute-positioned children stay below the path header) -->
+                        <div class="git-content-area">
+                            <!-- Diff error -->
+                            <div v-if="diffError" class="panel-placeholder">
+                                <wa-callout variant="danger" size="small">
+                                    {{ diffError }}
+                                </wa-callout>
+                            </div>
 
-                        <!-- Binary image (single side: added or deleted) -->
-                        <div v-else-if="diffData?.image" class="image-preview-container">
-                            <img
-                                ref="diffImageRef"
-                                :src="diffData.modified || diffData.original"
-                                :alt="selectedFile"
-                                class="image-preview"
+                            <!-- Binary image diff (both sides) -->
+                            <div v-else-if="diffData?.image && diffData.original && diffData.modified" class="image-diff-container">
+                                <wa-comparison>
+                                    <img slot="before" :src="diffData.original" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
+                                    <img slot="after" :src="diffData.modified" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
+                                </wa-comparison>
+                            </div>
+
+                            <!-- Binary image (single side: added or deleted) -->
+                            <div v-else-if="diffData?.image" class="image-preview-container">
+                                <img
+                                    ref="diffImageRef"
+                                    :src="diffData.modified || diffData.original"
+                                    :alt="selectedFile"
+                                    class="image-preview"
+                                />
+                            </div>
+
+                            <!-- Non-image binary file -->
+                            <div v-else-if="diffData?.binary" class="panel-placeholder">
+                                Binary file cannot be diffed
+                            </div>
+
+                            <!-- Diff viewer (CodeMirror diff editor via FilePane) -->
+                            <!-- Kept mounted: content updates in-place via prop changes, no destroy/recreate -->
+                            <FilePane
+                                v-else-if="selectedFile && diffData"
+                                :project-id="projectId"
+                                :session-id="sessionId"
+                                :file-path="selectedFilePath"
+                                :active="active"
+                                diff-mode
+                                :original-content="diffData.original"
+                                :modified-content="diffData.modified"
+                                :diff-read-only="!isViewingIndex"
+                                :initial-word-wrap="diffWordWrap"
+                                :initial-side-by-side="diffSideBySide"
+                                :commit-sha="isViewingIndex ? null : selectedCommit?.hash ?? null"
+                                @revert="fetchDiff(selectedFile)"
+                                @update:word-wrap="diffWordWrap = $event"
+                                @update:side-by-side="diffSideBySide = $event"
                             />
-                        </div>
 
-                        <!-- Non-image binary file -->
-                        <div v-else-if="diffData?.binary" class="panel-placeholder">
-                            Binary file cannot be diffed
-                        </div>
+                            <!-- No file selected / no changes -->
+                            <div v-else-if="!selectedFile" class="panel-placeholder">
+                                {{ !displayTree ? 'No changes' : 'Select a file' }}
+                            </div>
 
-                        <!-- Diff viewer (CodeMirror diff editor via FilePane) -->
-                        <!-- Kept mounted: content updates in-place via prop changes, no destroy/recreate -->
-                        <FilePane
-                            v-else-if="selectedFile && diffData"
-                            :project-id="projectId"
-                            :session-id="sessionId"
-                            :file-path="selectedFilePath"
-                            :display-path="!isMobile ? selectedFile : null"
-                            :active="active"
-                            diff-mode
-                            :original-content="diffData.original"
-                            :modified-content="diffData.modified"
-                            :diff-read-only="!isViewingIndex"
-                            :initial-word-wrap="diffWordWrap"
-                            :initial-side-by-side="diffSideBySide"
-                            :commit-sha="isViewingIndex ? null : selectedCommit?.hash ?? null"
-                            @revert="fetchDiff(selectedFile)"
-                            @update:word-wrap="diffWordWrap = $event"
-                            @update:side-by-side="diffSideBySide = $event"
-                        />
+                            <!-- Loading overlay (shown on top of existing content) -->
+                            <div v-if="diffLoadingVisible && selectedFile && diffData" class="diff-loading-overlay">
+                                <wa-spinner></wa-spinner>
+                            </div>
 
-                        <!-- No file selected / no changes -->
-                        <div v-else-if="!selectedFile" class="panel-placeholder">
-                            {{ !displayTree ? 'No changes' : 'Select a file' }}
-                        </div>
-
-                        <!-- Loading overlay (shown on top of existing content) -->
-                        <div v-if="diffLoadingVisible && selectedFile && diffData" class="diff-loading-overlay">
-                            <wa-spinner></wa-spinner>
-                        </div>
-
-                        <!-- Initial loading (no content yet) -->
-                        <div v-else-if="diffLoadingVisible && !diffData" class="panel-placeholder">
-                            <wa-spinner></wa-spinner>
+                            <!-- Initial loading (no content yet) -->
+                            <div v-else-if="diffLoadingVisible && !diffData" class="panel-placeholder">
+                                <wa-spinner></wa-spinner>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1389,8 +1435,53 @@ wa-callout {
     height: 100%;
     display: flex;
     flex-direction: column;
+}
+
+.git-content-area {
+    flex: 1;
+    min-height: 0;
     position: relative;
 }
+
+.file-path-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--wa-space-2xs) var(--wa-space-s);
+    min-height: 1.5rem;
+    flex-shrink: 0;
+    background: var(--wa-color-surface-alt);
+
+    & + wa-divider {
+        flex-shrink: 0;
+        --width: 4px;
+        --spacing: 0;
+    }
+}
+
+.file-path-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+}
+
+.git-badge {
+    flex-shrink: 0;
+    margin-left: var(--wa-space-xs);
+    font-size: var(--wa-font-size-xs);
+    font-weight: 600;
+    font-family: var(--wa-font-family-code);
+}
+
+.git-badge-unstaged { font-style: italic; }
+.git-badge-modified  { color: #c4841d; }
+.git-badge-added     { color: #3a9a28; }
+.git-badge-deleted   { color: #e5484d; }
+.git-badge-renamed   { color: #6e56cf; }
+.git-badge-untracked { color: #7c8594; }
 
 .diff-loading-overlay {
     position: absolute;
