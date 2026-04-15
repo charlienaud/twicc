@@ -15,7 +15,7 @@ import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
 import { searchTreeFiles } from '../utils/treeSearch'
 import { useCodeCommentsStore, buildCommentedPathsSet } from '../stores/codeComments'
-import { usePanZoom } from '../composables/usePanZoom'
+import { usePanZoom, useSyncedPanZoom } from '../composables/usePanZoom'
 
 const emit = defineEmits(['root-changed'])
 
@@ -567,6 +567,10 @@ async function refreshIndexFiles() {
 const diffData = ref(null)        // { original, modified, binary, image, error }
 const diffImageRef = ref(null)
 const { reset: resetDiffImageZoom } = usePanZoom(diffImageRef)
+const imageDiffContainerRef = ref(null)
+const diffBeforeImageRef = ref(null)
+const diffAfterImageRef = ref(null)
+const { reset: resetComparisonZoom } = useSyncedPanZoom(imageDiffContainerRef, diffBeforeImageRef, diffAfterImageRef)
 const diffLoading = ref(false)
 const diffLoadingVisible = ref(false)  // delayed: only true after 500ms of diffLoading
 let _diffLoadingTimer = null
@@ -642,6 +646,7 @@ async function fetchDiff(file) {
 // Fetch diff when a file is selected
 watch(selectedFile, (file) => {
     resetDiffImageZoom()
+    resetComparisonZoom()
     fetchDiff(file)
 })
 
@@ -1087,10 +1092,10 @@ onMounted(() => {
                             </div>
 
                             <!-- Binary image diff (both sides) -->
-                            <div v-else-if="diffData?.image && diffData.original && diffData.modified" class="image-diff-container">
+                            <div v-else-if="diffData?.image && diffData.original && diffData.modified" ref="imageDiffContainerRef" class="image-diff-container">
                                 <wa-comparison>
-                                    <img slot="before" :src="diffData.original" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
-                                    <img slot="after" :src="diffData.modified" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
+                                    <img ref="diffBeforeImageRef" slot="before" :src="diffData.original" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
+                                    <img ref="diffAfterImageRef" slot="after" :src="diffData.modified" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
                                 </wa-comparison>
                             </div>
 
