@@ -274,7 +274,7 @@ defineExpose({ open, reset, openWithQuery, goToNext, goToPrevious })
     gap: var(--wa-space-m);
     padding: var(--wa-space-s);
     background: var(--wa-color-surface-default);
-    border: 4px solid var(--wa-color-surface-border);
+    border: var(--divider-size) solid var(--wa-color-surface-border);
     border-top: 0;
     border-radius: 0 0 var(--wa-border-radius-l) var(--wa-border-radius-l);
     flex-shrink: 0;

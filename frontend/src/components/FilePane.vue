@@ -770,7 +770,7 @@ function goToNextDiff() {
 
     & + wa-divider {
         flex-shrink: 0;
-        --width: 4px;
+        --width: var(--divider-size);
         --spacing: 0;
     }
 }
@@ -789,7 +789,7 @@ function goToNextDiff() {
     align-items: center;
     justify-content: space-between;
     padding: var(--wa-space-xs) var(--wa-space-s);
-    border-bottom: 4px solid var(--wa-color-surface-border);
+    border-bottom: var(--divider-size) solid var(--wa-color-surface-border);
     min-height: 2.25rem;
     flex-shrink: 0;
     flex-wrap: wrap;

@@ -352,7 +352,7 @@ function onTabShow(event) {
 
 wa-divider {
     --spacing: 0;
-    --width: 4px;
+    --width: var(--divider-size);
 }
 
 .detail-tabs {
@@ -360,7 +360,7 @@ wa-divider {
     min-height: 0;
     overflow: hidden;
     --indicator-color: transparent;
-    --track-width: 4px;
+    --track-width: var(--divider-size);
 }
 
 .detail-tabs::part(base) {

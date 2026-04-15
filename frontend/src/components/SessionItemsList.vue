@@ -1669,7 +1669,7 @@ defineExpose({
 .session-footer {
     position: relative;
     > wa-divider {
-        --width: 4px;
+        --width: var(--divider-size);
         --spacing: 0;
     }
 }

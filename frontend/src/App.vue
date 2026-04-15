@@ -323,6 +323,9 @@ body {
     --sparkline-pink-gradient-color-4: #880e4f;
     --sparkline-pink-stroke-color: #e57399;
 
+    --divider-size: 4px;
+    --main-shadow-size: var(--wa-shadow-offset-y-s);
+
     /* Diff editor colors (light mode) */
     --diff-removedLineBackground: #FEF1F1;
     --diff-removedTextBackground: #FFC4C3;

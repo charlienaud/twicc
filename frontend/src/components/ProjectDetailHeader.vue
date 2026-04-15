@@ -406,7 +406,7 @@ function handleEditClick() {
     }
 
     .detail-header.compact-collapsed {
-        border-bottom: solid var(--wa-color-surface-border) 4px;
+        border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
         gap: 0;
         padding-block: 0;
         padding-inline: var(--wa-space-xs);
@@ -441,7 +441,7 @@ function handleEditClick() {
         z-index: 20;
         background: var(--wa-color-surface-default);
         box-shadow: var(--wa-shadow-s);
-        border-bottom: solid var(--wa-color-surface-border) 4px;
+        border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
 
         /* Hidden by default */
         opacity: 0;

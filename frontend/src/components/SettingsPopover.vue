@@ -926,7 +926,7 @@ function onChangelogClose() {
 /* Vertical divider between nav and detail */
 
 .settings-vertical-divider {
-    --width: 4px;
+    --width: var(--divider-size);
     --spacing: 0;
     align-self: stretch;
     height: auto;
@@ -1224,7 +1224,7 @@ kbd {
 /* -- Footer -- */
 
 wa-popover > wa-divider {
-    --width: 4px;
+    --width: var(--divider-size);
     --spacing: 0;
 }
 

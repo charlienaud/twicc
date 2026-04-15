@@ -452,7 +452,6 @@ const baseTheme = EditorView.baseTheme({
     '& .cm-code-comment-cancel': {
         padding: '2px 12px',
         border: '1px solid var(--wa-color-border-default, rgba(128, 128, 128, 0.3))',
-        borderRadius: '4px',
         backgroundColor: 'transparent',
         color: 'inherit',
         fontSize: '0.85em',
@@ -465,7 +464,6 @@ const baseTheme = EditorView.baseTheme({
     '& .cm-code-comment-add-to-msg, & .cm-code-comment-add-all-to-msg': {
         padding: '2px 12px',
         border: '1px solid var(--wa-color-border-default, rgba(128, 128, 128, 0.3))',
-        borderRadius: '4px',
         backgroundColor: 'transparent',
         color: 'inherit',
         fontSize: '0.85em',

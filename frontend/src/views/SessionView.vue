@@ -1121,7 +1121,7 @@ onBeforeUnmount(() => {
     min-height: 0;
     overflow: hidden;
     --indicator-color: transparent;
-    --track-width: 4px;
+    --track-width: var(--divider-size);
 }
 
 .session-tabs::part(base) {

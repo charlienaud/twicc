@@ -342,7 +342,7 @@ body:not([data-display-mode="debug"]) .json-toggle {
 
     width: max-content;
     margin:
-        calc(var(--card-spacing) - 4px)  /* size of box-shadow of previous card */
+        calc(var(--card-spacing) - var(--main-shadow-size))  /* size of box-shadow of previous card */
         var(--card-spacing)
         var(--card-spacing)
         auto;

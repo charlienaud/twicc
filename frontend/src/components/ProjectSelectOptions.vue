@@ -162,7 +162,7 @@ const flatTree = computed(() => {
     gap: var(--wa-space-2xs);
 }
 wa-divider {
-    --width: 4px;
+    --width: var(--divider-size);
     --spacing: 4px;
 }
 

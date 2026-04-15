@@ -833,7 +833,7 @@ function handleSubmitQuestions() {
 <style scoped>
 
 wa-divider {
-    --width: 4px;
+    --width: var(--divider-size);
     --spacing: 0;
 }
 

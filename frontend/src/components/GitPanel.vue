@@ -1308,7 +1308,7 @@ wa-callout {
 .git-panel-header {
     & + wa-divider {
         flex-shrink: 0;
-        --width: 4px;
+        --width: var(--divider-size);
         --spacing: 0;
     }
 }
@@ -1353,7 +1353,7 @@ wa-callout {
 
     &::part(divider) {
         background-color: var(--wa-color-surface-border);
-        width: 4px;
+        width: var(--divider-size);
     }
 }
 

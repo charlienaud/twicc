@@ -762,7 +762,7 @@ defineExpose({ revealFile, setRootByPath })
 
     &::part(divider) {
         background-color: var(--wa-color-surface-border);
-        width: 4px;
+        width: var(--divider-size);
     }
 }
 

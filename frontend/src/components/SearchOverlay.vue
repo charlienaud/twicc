@@ -721,7 +721,7 @@ defineExpose({ open })
 }
 
 .filter-select wa-divider {
-    --width: 4px;
+    --width: var(--divider-size);
     --spacing: 4px;
 }
 

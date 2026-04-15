@@ -1528,7 +1528,7 @@ function updateSidebarClosedClass(closed) {
 wa-split-panel::part(divider) {
     /* same color/width as normal dividers */
     background-color: var(--wa-color-surface-border);
-    width: 4px;
+    width: var(--divider-size);
 }
 /* Divider handle: hidden by default, shown only on touch devices */
 .divider-handle {
@@ -1692,7 +1692,7 @@ wa-split-panel::part(divider) {
 
 .sidebar wa-divider {
     flex-shrink: 0;
-    --width: 4px;
+    --width: var(--divider-size);
     --spacing: 0;
 }
 

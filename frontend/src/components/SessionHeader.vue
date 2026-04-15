@@ -800,7 +800,7 @@ body:not([data-display-mode="debug"]) .cost-breakdown-item {
 }
 
 wa-divider {
-    --width: 4px;
+    --width: var(--divider-size);
     --spacing: 0;
 }
 
@@ -921,7 +921,7 @@ wa-divider {
     }
 
     .session-header.compact-collapsed {
-        border-bottom: solid var(--wa-color-surface-border) 4px;
+        border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
     }
 
     /* In compact collapsed mode: hide action buttons, show active tab label */
@@ -972,7 +972,7 @@ wa-divider {
         z-index: 20;
         background: var(--wa-color-surface-default);
         box-shadow: var(--wa-shadow-s);
-        border-bottom: solid var(--wa-color-surface-border) 4px;
+        border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
 
         /* Hidden by default */
         opacity: 0;
