@@ -4,10 +4,11 @@ Provides git log parsing for the GitLog visualization component,
 and file diff retrieval for the Monaco diff editor.
 """
 
+import base64
 import os
 import subprocess
 
-from twicc.file_content import MAX_FILE_SIZE
+from twicc.file_content import IMAGE_EXTENSIONS, MAX_FILE_SIZE
 
 # Maximum number of entries returned to the frontend.
 GIT_LOG_MAX_ENTRIES = 200
@@ -606,7 +607,7 @@ def get_git_log(git_directory: str, branch: str | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _git_show(git_directory: str, ref_and_path: str) -> tuple[str | None, bool]:
+def _git_show(git_directory: str, ref_and_path: str) -> tuple[str | None, bool, bytes | None]:
     """Run ``git show <ref>:<path>`` and return the file content.
 
     Args:
@@ -615,10 +616,10 @@ def _git_show(git_directory: str, ref_and_path: str) -> tuple[str | None, bool]:
             or ``"abc1234^:src/main.py"``.
 
     Returns:
-        A tuple ``(content, is_binary)``:
-        - ``(content_str, False)`` for a normal text file.
-        - ``(None, True)`` if the file is binary.
-        - ``(None, False)`` if the file does not exist at the given ref
+        A tuple ``(content, is_binary, raw_bytes)``:
+        - ``(content_str, False, None)`` for a normal text file.
+        - ``(None, True, raw_bytes)`` if the file is binary.
+        - ``(None, False, None)`` if the file does not exist at the given ref
           or the git command fails for another reason.
     """
     try:
@@ -628,22 +629,47 @@ def _git_show(git_directory: str, ref_and_path: str) -> tuple[str | None, bool]:
             timeout=_GIT_TIMEOUT,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None, False
+        return None, False, None
 
     if result.returncode != 0:
-        return None, False
+        return None, False, None
 
     # Check size limit
     if len(result.stdout) > MAX_FILE_SIZE:
-        return None, False
+        return None, False, None
 
     # Try UTF-8 decode; binary files will fail
     try:
         content = result.stdout.decode("utf-8")
     except UnicodeDecodeError:
-        return None, True
+        return None, True, result.stdout
 
-    return content, False
+    return content, False, None
+
+
+def _make_image_data_uri(file_path: str, raw_bytes: bytes) -> str | None:
+    """Create a data URI for an image file from raw bytes, or None if not an image."""
+    ext = os.path.splitext(file_path)[1].lower()
+    mime_type = IMAGE_EXTENSIONS.get(ext)
+    if not mime_type:
+        return None
+    encoded = base64.b64encode(raw_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _read_image_from_disk(file_path: str) -> str | None:
+    """Read an image file from disk and return a data URI, or None."""
+    ext = os.path.splitext(file_path)[1].lower()
+    mime_type = IMAGE_EXTENSIONS.get(ext)
+    if not mime_type:
+        return None
+    try:
+        with open(file_path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def get_index_file_diff(git_directory: str, file_path: str) -> dict:
@@ -657,16 +683,23 @@ def get_index_file_diff(git_directory: str, file_path: str) -> dict:
 
     Returns:
         A dict with keys:
-        - ``original``: file content at HEAD, or None if the file is new.
-        - ``modified``: file content on disk, or None if the file was deleted.
+        - ``original``: file content at HEAD (or data URI for images), or None if the file is new.
+        - ``modified``: file content on disk (or data URI for images), or None if the file was deleted.
         - ``binary``: True if either version is binary.
+        - ``image``: True if the file is a known image type (only present when binary).
         - ``error``: error message string, or None.
     """
     # Original: content at HEAD
-    original, original_binary = _git_show(git_directory, f"HEAD:{file_path}")
+    original, original_binary, original_bytes = _git_show(git_directory, f"HEAD:{file_path}")
 
     if original_binary:
-        return {"original": None, "modified": None, "binary": True, "error": None}
+        original_image = _make_image_data_uri(file_path, original_bytes) if original_bytes else None
+        if not original_image:
+            return {"original": None, "modified": None, "binary": True, "error": None}
+        # Original is an image — check modified on disk too
+        abs_path = os.path.join(git_directory, file_path)
+        modified_image = _read_image_from_disk(abs_path) if os.path.isfile(abs_path) else None
+        return {"original": original_image, "modified": modified_image, "binary": True, "image": True, "error": None}
 
     # Modified: current content on disk
     abs_path = os.path.join(git_directory, file_path)
@@ -687,6 +720,10 @@ def get_index_file_diff(git_directory: str, file_path: str) -> dict:
         with open(abs_path, "r", encoding="utf-8") as f:
             modified = f.read()
     except UnicodeDecodeError:
+        # Modified is binary — check if it's an image (new image or text replaced by image)
+        modified_image = _read_image_from_disk(abs_path)
+        if modified_image:
+            return {"original": None, "modified": modified_image, "binary": True, "image": True, "error": None}
         return {"original": None, "modified": None, "binary": True, "error": None}
     except OSError:
         return {"original": None, "modified": None, "binary": False, "error": "Cannot read file"}
@@ -706,23 +743,25 @@ def get_commit_file_diff(git_directory: str, commit_hash: str, file_path: str) -
 
     Returns:
         A dict with keys:
-        - ``original``: file content at the parent commit, or None if the file
-          was added in this commit (or it's a root commit).
-        - ``modified``: file content at this commit, or None if the file was
-          deleted in this commit.
+        - ``original``: file content at the parent commit (or data URI for images),
+          or None if the file was added in this commit (or it's a root commit).
+        - ``modified``: file content at this commit (or data URI for images),
+          or None if the file was deleted in this commit.
         - ``binary``: True if either version is binary.
+        - ``image``: True if the file is a known image type (only present when binary).
         - ``error``: error message string, or None.
     """
     # Original: content at parent commit
-    original, original_binary = _git_show(git_directory, f"{commit_hash}^:{file_path}")
-
-    if original_binary:
-        return {"original": None, "modified": None, "binary": True, "error": None}
+    original, original_binary, original_bytes = _git_show(git_directory, f"{commit_hash}^:{file_path}")
 
     # Modified: content at this commit
-    modified, modified_binary = _git_show(git_directory, f"{commit_hash}:{file_path}")
+    modified, modified_binary, modified_bytes = _git_show(git_directory, f"{commit_hash}:{file_path}")
 
-    if modified_binary:
+    if original_binary or modified_binary:
+        original_image = _make_image_data_uri(file_path, original_bytes) if original_bytes else None
+        modified_image = _make_image_data_uri(file_path, modified_bytes) if modified_bytes else None
+        if original_image or modified_image:
+            return {"original": original_image, "modified": modified_image, "binary": True, "image": True, "error": None}
         return {"original": None, "modified": None, "binary": True, "error": None}
 
     return {"original": original, "modified": modified, "binary": False, "error": None}

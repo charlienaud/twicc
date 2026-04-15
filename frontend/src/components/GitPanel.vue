@@ -15,6 +15,7 @@ import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
 import { searchTreeFiles } from '../utils/treeSearch'
 import { useCodeCommentsStore, buildCommentedPathsSet } from '../stores/codeComments'
+import { usePanZoom } from '../composables/usePanZoom'
 
 const emit = defineEmits(['root-changed'])
 
@@ -528,7 +529,9 @@ async function refreshIndexFiles() {
 // Diff data (fetched when a file is selected)
 // ---------------------------------------------------------------------------
 
-const diffData = ref(null)        // { original, modified, binary, error }
+const diffData = ref(null)        // { original, modified, binary, image, error }
+const diffImageRef = ref(null)
+const { reset: resetDiffImageZoom } = usePanZoom(diffImageRef)
 const diffLoading = ref(false)
 const diffLoadingVisible = ref(false)  // delayed: only true after 500ms of diffLoading
 let _diffLoadingTimer = null
@@ -590,7 +593,7 @@ async function fetchDiff(file) {
 
         // Only update if the diff content actually changed — avoids
         // unnecessary MergeView destroy/recreate when nothing changed.
-        if (data.original !== diffData.value?.original || data.modified !== diffData.value?.modified || data.binary !== diffData.value?.binary) {
+        if (data.original !== diffData.value?.original || data.modified !== diffData.value?.modified || data.binary !== diffData.value?.binary || data.image !== diffData.value?.image) {
             diffData.value = data
         }
     } catch {
@@ -603,6 +606,7 @@ async function fetchDiff(file) {
 
 // Fetch diff when a file is selected
 watch(selectedFile, (file) => {
+    resetDiffImageZoom()
     fetchDiff(file)
 })
 
@@ -1036,7 +1040,25 @@ onMounted(() => {
                             </wa-callout>
                         </div>
 
-                        <!-- Binary file -->
+                        <!-- Binary image diff (both sides) -->
+                        <div v-else-if="diffData?.image && diffData.original && diffData.modified" class="image-diff-container">
+                            <wa-comparison>
+                                <img slot="before" :src="diffData.original" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
+                                <img slot="after" :src="diffData.modified" :alt="selectedFile" style="width: 100%; height: 100%; object-fit: contain;" />
+                            </wa-comparison>
+                        </div>
+
+                        <!-- Binary image (single side: added or deleted) -->
+                        <div v-else-if="diffData?.image" class="image-preview-container">
+                            <img
+                                ref="diffImageRef"
+                                :src="diffData.modified || diffData.original"
+                                :alt="selectedFile"
+                                class="image-preview"
+                            />
+                        </div>
+
+                        <!-- Non-image binary file -->
                         <div v-else-if="diffData?.binary" class="panel-placeholder">
                             Binary file cannot be diffed
                         </div>
@@ -1247,6 +1269,33 @@ wa-callout {
     font-size: var(--wa-font-size-s);
 }
 
+.image-diff-container {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+
+    wa-comparison {
+        width: 100%;
+        height: 100%;
+    }
+}
+
+.image-preview-container {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    display: flex;
+    padding: var(--wa-space-m);
+}
+
+.image-preview {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    touch-action: none;
+    margin: auto;
+}
+
 .error-content {
     display: flex;
     flex-direction: column;
@@ -1444,5 +1493,12 @@ wa-dropdown-item[data-root-selected="false"]::part(checkmark) {
     &::part(base) {
         padding: var(--wa-space-3xs) var(--wa-space-2xs);
     }
+}
+</style>
+
+<style>
+.image-diff-container wa-comparison::part(base),
+.image-diff-container wa-comparison::part(before) {
+    height: 100%;
 }
 </style>
