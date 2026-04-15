@@ -45,6 +45,18 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    apiPrefix: {
+        type: String,
+        default: null,
+    },
+    rootRestriction: {
+        type: String,
+        default: null,
+    },
+    externalRoots: {
+        type: Array,
+        default: null,
+    },
 })
 
 // ─── Mobile breakpoint detection ─────────────────────────────────────────────
@@ -67,8 +79,9 @@ const commentedPaths = computed(() => {
     return buildCommentedPathsSet(comments.map(c => c.filePath))
 })
 
-// API prefix: project-level for drafts, session-level otherwise
-const apiPrefix = computed(() => {
+// API prefix: use explicit prop when provided, otherwise project-level for drafts, session-level otherwise
+const resolvedApiPrefix = computed(() => {
+    if (props.apiPrefix) return props.apiPrefix
     if (props.isDraft) {
         return `/api/projects/${props.projectId}`
     }
@@ -105,6 +118,8 @@ const filePaneRef = ref(null)
  * a composite label (e.g. "Project directory (git root, cwd)").
  */
 const availableRoots = computed(() => {
+    if (props.externalRoots) return props.externalRoots
+
     const sessionGit = props.gitDirectory
     const cwd = props.sessionCwd
     const projectGitRoot = props.projectGitRoot
@@ -243,6 +258,7 @@ function optionsQuery() {
     let qs = ''
     if (showHidden.value) qs += '&show_hidden=1'
     if (showIgnored.value) qs += '&show_ignored=1'
+    if (props.rootRestriction) qs += `&root=${encodeURIComponent(props.rootRestriction)}`
     return qs
 }
 
@@ -255,8 +271,8 @@ const error = ref(null)
 /**
  * Fetch the directory tree from the backend.
  */
-async function fetchTree(projectId, sessionId, dirPath) {
-    if (!projectId || !dirPath) {
+async function fetchTree(dirPath) {
+    if (!resolvedApiPrefix.value || !dirPath) {
         tree.value = null
         return
     }
@@ -266,7 +282,7 @@ async function fetchTree(projectId, sessionId, dirPath) {
 
     try {
         const res = await apiFetch(
-            `${apiPrefix.value}/directory-tree/?path=${encodeURIComponent(dirPath)}${optionsQuery()}`
+            `${resolvedApiPrefix.value}/directory-tree/?path=${encodeURIComponent(dirPath)}${optionsQuery()}`
         )
         if (!res.ok) {
             const data = await res.json()
@@ -306,10 +322,10 @@ async function fetchTree(projectId, sessionId, dirPath) {
  * Returns { tree, total, truncated } on success, null on failure.
  */
 async function doSearch(query) {
-    if (!props.projectId || !directory.value) return null
+    if (!resolvedApiPrefix.value || !directory.value) return null
 
     const res = await apiFetch(
-        `${apiPrefix.value}/file-search/?path=${encodeURIComponent(directory.value)}&q=${encodeURIComponent(query)}${optionsQuery()}`
+        `${resolvedApiPrefix.value}/file-search/?path=${encodeURIComponent(directory.value)}&q=${encodeURIComponent(query)}${optionsQuery()}`
     )
     if (res.ok) {
         const data = await res.json()
@@ -323,8 +339,9 @@ async function doSearch(query) {
  * Returns { children: [...] } on success, null on failure.
  */
 async function lazyLoadDir(path) {
+    if (!resolvedApiPrefix.value) return null
     const res = await apiFetch(
-        `${apiPrefix.value}/directory-tree/?path=${encodeURIComponent(path)}${optionsQuery()}`
+        `${resolvedApiPrefix.value}/directory-tree/?path=${encodeURIComponent(path)}${optionsQuery()}`
     )
     if (!res.ok) return null
     return await res.json()
@@ -343,13 +360,13 @@ watch(
     { immediate: true },
 )
 
-// Fetch tree whenever the directory, projectId, or display options change
+// Fetch tree whenever the resolved API prefix, directory, or display options change
 // (only after the panel has been started)
 watch(
-    () => [started.value, props.projectId, props.sessionId, directory.value, showHidden.value, showIgnored.value],
-    ([isStarted, newProjectId, newSessionId, newDir]) => {
+    () => [started.value, resolvedApiPrefix.value, directory.value, showHidden.value, showIgnored.value],
+    ([isStarted, , newDir]) => {
         if (!isStarted) return
-        fetchTree(newProjectId, newSessionId, newDir)
+        fetchTree(newDir)
         // Re-run the active search if any, so results reflect new options
         if (fileTreePanelRef.value?.isSearching && fileTreePanelRef.value?.searchQuery.trim()) {
             fileTreePanelRef.value.rerunSearch()
@@ -380,7 +397,7 @@ function handleOptionsSelect(value) {
 async function refresh() {
     const fileToScroll = fileTreePanelRef.value?.selectedAbsPath
 
-    await fetchTree(props.projectId, props.sessionId, directory.value)
+    await fetchTree(directory.value)
 
     if (fileTreePanelRef.value?.isSearching && fileTreePanelRef.value?.searchQuery.trim()) {
         fileTreePanelRef.value.rerunSearch()
@@ -662,6 +679,8 @@ defineExpose({ revealFile, setRootByPath })
                     :file-path="selectedAbsPath"
                     :active="active"
                     :is-draft="isDraft"
+                    :api-prefix="resolvedApiPrefix"
+                    :root-restriction="rootRestriction"
                 />
                 <div v-show="!selectedFile" class="panel-placeholder">
                     Select a file

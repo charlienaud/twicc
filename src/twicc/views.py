@@ -740,6 +740,17 @@ def file_search(request, project_id, session_id=None):
     return JsonResponse(tree)
 
 
+def validate_standalone_root(path, root):
+    """Validate that path is within root directory. Returns error response or None."""
+    if not root:
+        return None  # No restriction
+    root = os.path.normpath(root)
+    path = os.path.normpath(path)
+    if path != root and not path.startswith(root + os.sep):
+        return JsonResponse({"error": "Path is outside the allowed root directory"}, status=403)
+    return None
+
+
 def standalone_directory_tree(request):
     """GET directory tree listing for any absolute directory path.
 
@@ -749,9 +760,12 @@ def standalone_directory_tree(request):
     TwiCC is a local-only tool running on the user's own machine.
 
     Authentication is enforced by PasswordAuthMiddleware.
-    Always passes show_ignored=True so directories inside git repos are not
-    hidden by .gitignore rules (the user needs to see all directories when
-    picking a project root).
+
+    Supports an optional ?root= parameter for server-side path restriction.
+
+    If show_ignored is not explicitly passed, defaults to True so directories
+    inside git repos are not hidden by .gitignore rules (the user needs to see
+    all directories when picking a project root).
     """
     from twicc.file_tree import get_directory_tree
 
@@ -767,16 +781,138 @@ def standalone_directory_tree(request):
     if not os.path.isdir(dir_path):
         return JsonResponse({"error": "Directory not found"}, status=404)
 
+    root = request.GET.get("root", "").strip()
+    error = validate_standalone_root(dir_path, root)
+    if error:
+        return error
+
     show_hidden = request.GET.get("show_hidden") == "1"
+    show_ignored = request.GET.get("show_ignored") != "0" if "show_ignored" in request.GET else True
     directories_only = request.GET.get("directories_only") == "1"
 
-    tree = get_directory_tree(dir_path, show_hidden=show_hidden, show_ignored=True, directories_only=directories_only)
+    tree = get_directory_tree(
+        dir_path, show_hidden=show_hidden, show_ignored=show_ignored, directories_only=directories_only,
+    )
     return JsonResponse(tree)
 
 
 def home_directory(request):
     """GET the current user's home directory path."""
     return JsonResponse({"path": os.path.expanduser("~")})
+
+
+def standalone_file_search(request):
+    """GET file search for any absolute directory path.
+
+    Unlike the project-scoped file-search endpoint, this does not require
+    a project. Supports an optional ?root= parameter for server-side path restriction.
+
+    If show_ignored is not explicitly passed, defaults to True.
+    """
+    from twicc.file_tree import search_files
+
+    dir_path = request.GET.get("path", "").strip()
+    if not dir_path:
+        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+
+    dir_path = os.path.normpath(dir_path)
+
+    if not os.path.isabs(dir_path):
+        return JsonResponse({"error": "Path must be absolute"}, status=400)
+
+    if not os.path.isdir(dir_path):
+        return JsonResponse({"error": "Directory not found"}, status=404)
+
+    root = request.GET.get("root", "").strip()
+    error = validate_standalone_root(dir_path, root)
+    if error:
+        return error
+
+    query = request.GET.get("q", "").strip()
+    show_hidden = request.GET.get("show_hidden") == "1"
+    show_ignored = request.GET.get("show_ignored") != "0" if "show_ignored" in request.GET else True
+
+    try:
+        max_results = int(request.GET.get("limit", 50))
+        max_results = max(1, min(max_results, 200))
+    except (ValueError, TypeError):
+        max_results = 50
+
+    tree = search_files(
+        dir_path, query,
+        max_results=max_results,
+        show_hidden=show_hidden,
+        show_ignored=show_ignored,
+    )
+    return JsonResponse(tree)
+
+
+def standalone_file_content(request):
+    """GET/PUT file content for any absolute file path.
+
+    Unlike the project-scoped file-content endpoint, this does not require
+    a project. Supports an optional root parameter for server-side path restriction.
+    """
+    from twicc.file_content import get_file_content, write_file_content
+
+    # PUT: write file content
+    if request.method == "PUT":
+        try:
+            data = orjson.loads(request.body)
+        except orjson.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        content = data.get("content")
+        if content is None:
+            return JsonResponse({"error": "Missing 'content' field"}, status=400)
+
+        file_path = (data.get("path") or "").strip()
+        if not file_path:
+            return JsonResponse({"error": "Missing 'path' field"}, status=400)
+
+        file_path = os.path.normpath(file_path)
+
+        if not os.path.isabs(file_path):
+            return JsonResponse({"error": "Path must be absolute"}, status=400)
+
+        root = (data.get("root") or "").strip()
+        error = validate_standalone_root(file_path, root)
+        if error:
+            return error
+
+        parent_dir = os.path.dirname(file_path)
+        if not os.path.isdir(parent_dir):
+            return JsonResponse({"error": "Parent directory not found"}, status=404)
+
+        result = write_file_content(file_path, content)
+        if result.get("error"):
+            return JsonResponse(result, status=400)
+
+        return JsonResponse(result)
+
+    # GET: read file content (default)
+    file_path = request.GET.get("path", "").strip()
+    if not file_path:
+        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+
+    file_path = os.path.normpath(file_path)
+
+    if not os.path.isabs(file_path):
+        return JsonResponse({"error": "Path must be absolute"}, status=400)
+
+    root = request.GET.get("root", "").strip()
+    error = validate_standalone_root(file_path, root)
+    if error:
+        return error
+
+    if not os.path.isfile(file_path):
+        return JsonResponse({"error": "File not found"}, status=404)
+
+    result = get_file_content(file_path)
+    if result.get("error"):
+        return JsonResponse(result, status=400)
+
+    return JsonResponse(result)
 
 
 def file_content(request, project_id, session_id=None):

@@ -18,6 +18,8 @@ urlpatterns = [
     path("api/usage-history/", views.usage_history),
     # Standalone filesystem endpoints (for directory picker, no project required)
     path("api/directory-tree/", views.standalone_directory_tree),
+    path("api/file-search/", views.standalone_file_search),
+    path("api/file-content/", views.standalone_file_content),
     path("api/home-directory/", views.home_directory),
     path("api/projects/", views.project_list),
     path("api/projects/<str:project_id>/", views.project_detail),

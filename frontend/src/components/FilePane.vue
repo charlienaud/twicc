@@ -34,6 +34,14 @@ const props = defineProps({
         type: Boolean,
         default: true,  // true for commit diffs, false for index (editable)
     },
+    apiPrefix: {
+        type: String,
+        default: null,
+    },
+    rootRestriction: {
+        type: String,
+        default: null,
+    },
     active: {
         type: Boolean,
         default: true,
@@ -63,8 +71,9 @@ const searchButtonId = useId()
 // null when FilePane is not inside a SessionView (or no Files tab available).
 const viewFileInFilesTab = inject('viewFileInFilesTab', null)
 
-// API prefix: project-level for drafts, session-level otherwise
-const apiPrefix = computed(() => {
+// API prefix: use explicit prop when provided, otherwise project-level for drafts, session-level otherwise
+const resolvedApiPrefix = computed(() => {
+    if (props.apiPrefix) return props.apiPrefix
     if (props.isDraft) {
         return `/api/projects/${props.projectId}`
     }
@@ -270,9 +279,9 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
     imageSrc.value = null
 
     try {
-        const res = await apiFetch(
-            `${apiPrefix.value}/file-content/?path=${encodeURIComponent(filePath)}`
-        )
+        let url = `${resolvedApiPrefix.value}/file-content/?path=${encodeURIComponent(filePath)}`
+        if (props.rootRestriction) url += `&root=${encodeURIComponent(props.rootRestriction)}`
+        const res = await apiFetch(url)
         const data = await res.json()
 
         if (!res.ok) {
@@ -380,15 +389,14 @@ async function save() {
     const content = currentContent.value
 
     try {
+        const body = { path: props.filePath, content }
+        if (props.rootRestriction) body.root = props.rootRestriction
         const res = await apiFetch(
-            `${apiPrefix.value}/file-content/`,
+            `${resolvedApiPrefix.value}/file-content/`,
             {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    path: props.filePath,
-                    content,
-                }),
+                body: JSON.stringify(body),
             }
         )
         const data = await res.json()

@@ -2,13 +2,15 @@
 // ProjectDetailPanel.vue - Detail panel shown when no session is selected.
 // Delegates header display to ProjectDetailHeader, then shows tabbed content.
 
-import { ref, computed, onActivated, onDeactivated } from 'vue'
+import { ref, computed, watchEffect, onActivated, onDeactivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ALL_PROJECTS_ID, useDataStore } from '../stores/data'
 import { useWorkspacesStore } from '../stores/workspaces'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../utils/workspaceIds'
 import ProjectDetailHeader from './ProjectDetailHeader.vue'
+import { apiFetch } from '../utils/api'
 import ContributionGraphs from './ContributionGraphs.vue'
+import FilesPanel from './FilesPanel.vue'
 import TerminalPanel from './TerminalPanel.vue'
 
 const props = defineProps({
@@ -26,6 +28,8 @@ const props = defineProps({
 
 const dataStore = useDataStore()
 const workspacesStore = useWorkspacesStore()
+const route = useRoute()
+const router = useRouter()
 
 // KeepAlive lifecycle — track whether this instance is active (not cached)
 const isKeptAlive = ref(true)
@@ -35,8 +39,9 @@ onDeactivated(() => { isKeptAlive.value = false })
 // Effective active state: visible AND not deactivated by KeepAlive
 const isActive = computed(() => props.active && isKeptAlive.value)
 
-// Workspace project IDs (needed for ContributionGraphs)
+// Mode detection — needed by terminal, files, and tab management sections
 const isWorkspaceMode = computed(() => isWorkspaceProjectId(props.projectId))
+const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
 const workspaceId = computed(() => isWorkspaceMode.value ? extractWorkspaceId(props.projectId) : null)
 const workspaceProjectIds = computed(() =>
     workspaceId.value ? workspacesStore.getVisibleProjectIds(workspaceId.value) : null
@@ -83,20 +88,100 @@ const terminalCwd = computed(() => {
     return common.length > 1 ? common.join('/') : '/'
 })
 
+const homeDir = ref(null)
+
+watchEffect(async () => {
+    if (props.projectId === ALL_PROJECTS_ID && !homeDir.value) {
+        try {
+            const res = await apiFetch('/api/home-directory/')
+            if (res.ok) {
+                const data = await res.json()
+                homeDir.value = data.path
+            }
+        } catch { /* ignore */ }
+    }
+})
+
+// For project files, pass the real project ID (not workspace/all-projects pseudo-IDs)
+const filesProjectId = computed(() => {
+    if (props.projectId === ALL_PROJECTS_ID || isWorkspaceProjectId(props.projectId)) return null
+    return props.projectId
+})
+
+const filesApiPrefix = computed(() => {
+    // Single project mode: use project-scoped endpoints (browsing restricted via validate_path)
+    if (!isAllProjectsMode.value && !isWorkspaceMode.value) {
+        return `/api/projects/${props.projectId}`
+    }
+    // All-projects and workspace modes: use standalone endpoints (restricted via ?root= param)
+    return '/api'
+})
+
+const filesRootRestriction = computed(() => {
+    // Project mode: restriction handled by validate_path, no need for ?root=
+    if (!isAllProjectsMode.value && !isWorkspaceMode.value) return null
+    // All-projects mode: restrict to $HOME
+    if (props.projectId === ALL_PROJECTS_ID) return homeDir.value
+    // Workspace mode: restrict to LCA
+    return terminalCwd.value
+})
+
+const filesAvailableRoots = computed(() => {
+    // All-projects mode
+    if (props.projectId === ALL_PROJECTS_ID) {
+        if (!homeDir.value) return []
+        return [{ key: 'home', label: 'Home directory', path: homeDir.value }]
+    }
+
+    // Workspace mode
+    if (isWorkspaceMode.value) {
+        const roots = []
+        const lca = terminalCwd.value  // reuse the LCA already computed for terminal
+        if (!lca) return []
+        roots.push({ key: 'common', label: 'Common directory', path: lca })
+
+        // Add unique project directories that differ from LCA
+        const seen = new Set([lca])
+        const projectEntries = []
+        for (const pid of workspaceProjectIds.value || []) {
+            const project = dataStore.getProject(pid)
+            const dir = project?.directory
+            if (!dir || seen.has(dir)) continue
+            seen.add(dir)
+            projectEntries.push({
+                key: `p:${pid}`,
+                label: project.name || dir.split('/').pop(),
+                path: dir,
+            })
+        }
+        projectEntries.sort((a, b) => a.label.localeCompare(b.label))
+        roots.push(...projectEntries)
+        return roots
+    }
+
+    // Single project mode
+    const project = dataStore.getProject(props.projectId)
+    if (!project?.directory) return []
+    const roots = [{ key: 'directory', label: 'Project directory', path: project.directory }]
+    if (project.git_root && project.git_root !== project.directory) {
+        roots.push({ key: 'git', label: 'Git root', path: project.git_root })
+    }
+    return roots
+})
+
 // Tab management — derived from route (like SessionView)
-const route = useRoute()
-const router = useRouter()
 const headerRef = ref(null)
 
 const TABS = [
     { id: 'stats', label: 'Stats', icon: 'chart-simple' },
+    { id: 'files', label: 'Files', icon: 'folder-open' },
     { id: 'terminal', label: 'Terminal', icon: 'terminal' },
 ]
 
 // Active tab derived from the route name
-const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
 const activeTab = computed(() => {
     const name = route.name
+    if (name === 'project-files' || name === 'projects-files') return 'files'
     if (name === 'project-terminal' || name === 'projects-terminal') return 'terminal'
     return 'stats'
 })
@@ -108,7 +193,13 @@ const activeTabLabel = computed(() => {
 
 function switchToTab(tabId) {
     if (tabId === activeTab.value) return
-    if (tabId === 'terminal') {
+    if (tabId === 'files') {
+        router.push({
+            name: isAllProjectsMode.value ? 'projects-files' : 'project-files',
+            params: isAllProjectsMode.value ? {} : { projectId: props.projectId },
+            query: route.query,
+        })
+    } else if (tabId === 'terminal') {
         router.push({
             name: isAllProjectsMode.value ? 'projects-terminal' : 'project-terminal',
             params: isAllProjectsMode.value ? {} : { projectId: props.projectId },
@@ -177,6 +268,16 @@ function onTabShow(event) {
 
             <wa-tab-panel name="stats">
                 <ContributionGraphs :project-id="projectId" :project-ids="workspaceProjectIds" />
+            </wa-tab-panel>
+
+            <wa-tab-panel name="files">
+                <FilesPanel
+                    :api-prefix="filesApiPrefix"
+                    :project-id="filesProjectId"
+                    :root-restriction="filesRootRestriction"
+                    :external-roots="filesAvailableRoots"
+                    :active="isActive && activeTab === 'files'"
+                />
             </wa-tab-panel>
 
             <wa-tab-panel name="terminal">
@@ -249,6 +350,12 @@ wa-tab::part(base) {
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+}
+
+.detail-tabs :deep(wa-tab-panel[name="files"])::part(base),
+.detail-tabs :deep(wa-tab-panel[name="terminal"])::part(base) {
+    overflow-y: hidden;
+    padding-bottom: 0;
 }
 
 /* Compact tab nav: hidden by default, shown in compact overlay */
