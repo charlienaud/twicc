@@ -1048,6 +1048,7 @@ onMounted(() => {
                             :project-id="projectId"
                             :session-id="sessionId"
                             :file-path="selectedFilePath"
+                            :display-path="!isMobile ? selectedFile : null"
                             :active="active"
                             diff-mode
                             :original-content="diffData.original"

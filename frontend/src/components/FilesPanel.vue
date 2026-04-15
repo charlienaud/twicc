@@ -677,6 +677,7 @@ defineExpose({ revealFile, setRootByPath })
                     :project-id="projectId"
                     :session-id="sessionId"
                     :file-path="selectedAbsPath"
+                    :display-path="!isMobile ? selectedFile : null"
                     :active="active"
                     :is-draft="isDraft"
                     :api-prefix="resolvedApiPrefix"

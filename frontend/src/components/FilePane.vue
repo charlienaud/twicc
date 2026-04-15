@@ -56,10 +56,15 @@ const props = defineProps({
         type: Boolean,
         default: null,
     },
+    displayPath: {
+        type: String,
+        default: null,
+    },
 })
 
 const emit = defineEmits(['revert', 'update:wordWrap', 'update:sideBySide'])
 
+const filePathLabelId = useId()
 const prevChangeButtonId = useId()
 const nextChangeButtonId = useId()
 const markdownPreviewButtonId = useId()
@@ -515,6 +520,15 @@ function goToNextDiff() {
 
 <template>
     <div class="file-pane">
+        <!-- File path bar (desktop only, when displayPath is provided) -->
+        <template v-if="displayPath">
+            <div class="file-path-header">
+                <span class="file-path-label" :id="filePathLabelId">{{ displayPath }}</span>
+                <AppTooltip :for="filePathLabelId">{{ displayPath }}</AppTooltip>
+            </div>
+            <wa-divider></wa-divider>
+        </template>
+
         <!-- Header toolbar (visible once a file has been loaded) -->
         <div v-if="showHeader" class="header">
             <div class="header-left">
@@ -732,6 +746,31 @@ function goToNextDiff() {
     height: 100%;
     display: flex;
     flex-direction: column;
+}
+
+.file-path-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--wa-space-2xs) var(--wa-space-s);
+    min-height: 1.5rem;
+    flex-shrink: 0;
+    background: var(--wa-color-surface-alt);
+
+    & + wa-divider {
+        flex-shrink: 0;
+        --width: 4px;
+        --spacing: 0;
+    }
+}
+
+.file-path-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
 }
 
 .header {
