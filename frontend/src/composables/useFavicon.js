@@ -11,8 +11,10 @@
  * - One active → 2-step cycle: default → colored dot (1s each)
  * - Both active → 4-step cycle: default → blue dot → default → orange dot
  *
- * The three possible favicon data URLs (default, blue dot, orange dot) are
- * pre-generated once when the base SVG is loaded, then reused from cache.
+ * The three possible favicon variants (default, blue dot, orange dot) are
+ * pre-generated as blob URLs once when the base SVG is loaded, then reused
+ * from cache. Blob URLs avoid polluting the browser network panel (unlike
+ * data: URLs which Chrome logs as requests on every href change).
  */
 import { watch, ref, computed, onBeforeUnmount } from 'vue'
 import { useDataStore } from '../stores/data'
@@ -54,10 +56,10 @@ function buildComposedSvg(baseViewBox, baseInnerHtml, dotColor) {
 }
 
 /**
- * Convert an SVG string to a data: URL.
+ * Convert an SVG string to a blob: URL (avoids polluting the browser network panel).
  */
-function svgToDataUrl(svgString) {
-    return `data:image/svg+xml,${encodeURIComponent(svgString)}`
+function svgToBlobUrl(svgString) {
+    return URL.createObjectURL(new Blob([svgString], { type: 'image/svg+xml' }))
 }
 
 /**
@@ -98,20 +100,20 @@ export function useFavicon() {
     const baseSvg = ref(null)
     let animationInterval = null
 
-    // Pre-generated data URLs for the 3 favicon variants: { default, assistant_turn, unread }
+    // Pre-generated blob URLs for the 3 favicon variants: { default, assistant_turn, unread }
     let cachedUrls = null
 
     /**
-     * Build and cache the 3 favicon data URLs from the loaded base SVG.
+     * Build and cache the 3 favicon blob URLs from the loaded base SVG.
      */
     function buildCache(base) {
         const defaultSvg = buildComposedSvg(base.viewBox, base.innerHTML, null)
         const blueSvg = buildComposedSvg(base.viewBox, base.innerHTML, resolveCssColor(DOT_CSS_VARS.assistant_turn))
         const orangeSvg = buildComposedSvg(base.viewBox, base.innerHTML, resolveCssColor(DOT_CSS_VARS.unread))
         cachedUrls = {
-            default: svgToDataUrl(defaultSvg),
-            assistant_turn: svgToDataUrl(blueSvg),
-            unread: svgToDataUrl(orangeSvg),
+            default: svgToBlobUrl(defaultSvg),
+            assistant_turn: svgToBlobUrl(blueSvg),
+            unread: svgToBlobUrl(orangeSvg),
         }
     }
 
