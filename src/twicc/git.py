@@ -767,5 +767,95 @@ def get_commit_file_diff(git_directory: str, commit_hash: str, file_path: str) -
     return {"original": original, "modified": modified, "binary": False, "error": None}
 
 
+# ---------------------------------------------------------------------------
+# Git working-tree actions (stage, unstage, discard)
+# ---------------------------------------------------------------------------
+
+
+def _validate_path_in_repo(git_directory: str, file_path: str) -> str:
+    """Validate that file_path stays within git_directory. Returns absolute path.
+
+    Raises GitError if the resolved path escapes the repository root.
+    """
+    abs_path = os.path.normpath(os.path.join(git_directory, file_path))
+    if not abs_path.startswith(os.path.normpath(git_directory) + os.sep) and abs_path != os.path.normpath(git_directory):
+        raise GitError("Path is outside the repository")
+    return abs_path
+
+
+def git_stage(git_directory: str, file_path: str) -> None:
+    """Stage a file (``git add <path>``).
+
+    Raises GitError on failure.
+    """
+    _validate_path_in_repo(git_directory, file_path)
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", git_directory, "add", "--", file_path],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise GitError("git add timed out")
+    except FileNotFoundError:
+        raise GitError("Git is not installed or not in PATH")
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise GitError(f"git add failed: {stderr}" if stderr else "git add failed")
+
+
+def git_unstage(git_directory: str, file_path: str) -> None:
+    """Unstage a file (``git restore --staged <path>``).
+
+    Raises GitError on failure.
+    """
+    _validate_path_in_repo(git_directory, file_path)
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", git_directory, "restore", "--staged", "--", file_path],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise GitError("git restore --staged timed out")
+    except FileNotFoundError:
+        raise GitError("Git is not installed or not in PATH")
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise GitError(f"git restore --staged failed: {stderr}" if stderr else "git restore --staged failed")
+
+
+def git_discard(git_directory: str, file_path: str) -> None:
+    """Discard unstaged changes for a tracked file (``git restore <path>``).
+
+    For deleted files this restores the file from HEAD.
+
+    Raises GitError on failure.
+    """
+    _validate_path_in_repo(git_directory, file_path)
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", git_directory, "restore", "--", file_path],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise GitError("git restore timed out")
+    except FileNotFoundError:
+        raise GitError("Git is not installed or not in PATH")
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise GitError(f"git restore failed: {stderr}" if stderr else "git restore failed")
+
+
 class GitError(Exception):
     """Raised when a git operation fails."""

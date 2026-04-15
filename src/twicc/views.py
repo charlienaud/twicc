@@ -1417,6 +1417,50 @@ def git_commit_file_diff(request, project_id, commit_hash, session_id=None):
     return JsonResponse(result)
 
 
+def _git_file_action(request, project_id, session_id, action):
+    """Shared logic for git stage/unstage/discard operations."""
+    from twicc.git import GitError, git_discard, git_stage, git_unstage
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = orjson.loads(request.body)
+    except orjson.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    file_path = (data.get("path") or "").strip()
+    if not file_path:
+        return JsonResponse({"error": "Missing 'path' field"}, status=400)
+
+    requested_git_dir = data.get("git_dir")
+    git_directory = _resolve_session_git_directory(project_id, session_id, requested_git_dir=requested_git_dir)
+
+    fn = {"stage": git_stage, "unstage": git_unstage, "discard": git_discard}[action]
+
+    try:
+        fn(git_directory, file_path)
+    except GitError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+    return JsonResponse({"ok": True})
+
+
+def git_stage_file(request, project_id, session_id=None):
+    """POST: stage a file (git add)."""
+    return _git_file_action(request, project_id, session_id, "stage")
+
+
+def git_unstage_file(request, project_id, session_id=None):
+    """POST: unstage a file (git restore --staged)."""
+    return _git_file_action(request, project_id, session_id, "unstage")
+
+
+def git_discard_file(request, project_id, session_id=None):
+    """POST: discard unstaged changes (git restore)."""
+    return _git_file_action(request, project_id, session_id, "discard")
+
+
 _WEEKLY_ACTIVITY_MAX_WEEKS = 52
 
 

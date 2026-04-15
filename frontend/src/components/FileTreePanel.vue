@@ -128,9 +128,19 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    /** Context menu mode: 'files' (full file ops), 'git-index' (uncommitted), 'git-commit' (committed) */
+    contextMenuMode: {
+        type: String,
+        default: 'files',
+    },
+    /** Absolute path of the git directory (for building fullPath in git mode) */
+    gitDirectory: {
+        type: String,
+        default: null,
+    },
 })
 
-const emit = defineEmits(['file-select', 'refresh', 'option-select', 'filter-input'])
+const emit = defineEmits(['file-select', 'refresh', 'option-select', 'filter-input', 'git-stage', 'git-unstage', 'git-discard'])
 
 // ─── Mobile overlay state ────────────────────────────────────────────────────
 
@@ -878,6 +888,8 @@ const contextMenu = ref({
     type: 'file',
     writable: false,
     writableLoading: false,
+    stagedStatus: null,
+    unstagedStatus: null,
 })
 
 const renameDialogRef = ref(null)
@@ -900,8 +912,14 @@ async function onContextMenu(data) {
         name: data.name,
         type: data.type,
         writable: false,
-        writableLoading: true,
+        writableLoading: props.contextMenuMode === 'files',
+        stagedStatus: data.stagedStatus || null,
+        unstagedStatus: data.unstagedStatus || null,
     }
+
+    // In files mode, check writable status via API. In git modes, skip.
+    if (props.contextMenuMode !== 'files') return
+
     try {
         const res = await apiFetch(
             `${apiPrefix.value}/file-content/?path=${encodeURIComponent(data.path)}&meta_only=true`
@@ -933,6 +951,26 @@ function computeRelativePath(absolutePath) {
         : absolutePath
 }
 
+function computeFullPath(absolutePath) {
+    if (props.gitDirectory) {
+        const relativePath = computeRelativePath(absolutePath)
+        return `${props.gitDirectory}/${relativePath}`
+    }
+    return absolutePath
+}
+
+function handleGitStage() {
+    emit('git-stage', { path: computeRelativePath(contextMenu.value.path) })
+}
+
+function handleGitUnstage() {
+    emit('git-unstage', { path: computeRelativePath(contextMenu.value.path) })
+}
+
+function handleGitDiscard() {
+    emit('git-discard', { path: computeRelativePath(contextMenu.value.path) })
+}
+
 function handleRename() {
     renameDialogRef.value?.open({
         path: contextMenu.value.path,
@@ -943,7 +981,7 @@ function handleRename() {
 
 function handleDelete() {
     deleteDialogRef.value?.open({
-        path: contextMenu.value.path,
+        path: computeFullPath(contextMenu.value.path),
         name: contextMenu.value.name,
         type: contextMenu.value.type,
     })
@@ -958,7 +996,7 @@ function handleCopyRelativePath() {
 }
 
 function handleCopyFullPath() {
-    navigator.clipboard.writeText(contextMenu.value.path)
+    navigator.clipboard.writeText(computeFullPath(contextMenu.value.path))
 }
 
 function handleMove() {
@@ -1188,9 +1226,12 @@ defineExpose({
                 :node-name="contextMenu.name"
                 :node-type="contextMenu.type"
                 :relative-path="computeRelativePath(contextMenu.path)"
-                :full-path="contextMenu.path"
+                :full-path="computeFullPath(contextMenu.path)"
                 :writable="contextMenu.writable"
                 :writable-loading="contextMenu.writableLoading"
+                :mode="contextMenuMode"
+                :staged-status="contextMenu.stagedStatus"
+                :unstaged-status="contextMenu.unstagedStatus"
                 @close="closeContextMenu"
                 @create-file="handleCreateFile"
                 @create-folder="handleCreateFolder"
@@ -1200,6 +1241,9 @@ defineExpose({
                 @copy-name="handleCopyName"
                 @copy-relative-path="handleCopyRelativePath"
                 @copy-full-path="handleCopyFullPath"
+                @git-stage="handleGitStage"
+                @git-unstage="handleGitUnstage"
+                @git-discard="handleGitDiscard"
             />
             <FileRenameDialog
                 v-if="apiPrefix"

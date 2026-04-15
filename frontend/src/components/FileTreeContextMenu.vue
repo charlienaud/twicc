@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 
 const props = defineProps({
     visible: { type: Boolean, default: false },
@@ -11,13 +11,54 @@ const props = defineProps({
     fullPath: { type: String, default: '' },
     writable: { type: Boolean, default: false },
     writableLoading: { type: Boolean, default: false },
+    // 'files' = Files tab (full file ops), 'git-index' = uncommitted changes, 'git-commit' = committed
+    mode: { type: String, default: 'files' },
+    // Git status of the node (only relevant in git-index mode)
+    stagedStatus: { type: String, default: null },
+    unstagedStatus: { type: String, default: null },
 })
 
-const emit = defineEmits(['close', 'create-file', 'create-folder', 'rename', 'move', 'delete', 'copy-name', 'copy-relative-path', 'copy-full-path'])
+const emit = defineEmits([
+    'close',
+    'create-file', 'create-folder', 'rename', 'move', 'delete',
+    'copy-name', 'copy-relative-path', 'copy-full-path',
+    'git-stage', 'git-unstage', 'git-discard',
+])
 
 const dropdownRef = ref(null)
 const triggerRef = ref(null)
 let openedByUs = false
+
+const isFilesMode = computed(() => props.mode === 'files')
+const isGitIndex = computed(() => props.mode === 'git-index')
+
+const canStage = computed(() => {
+    if (!isGitIndex.value) return false
+    if (props.nodeType === 'directory') return true
+    return !!props.unstagedStatus && props.unstagedStatus !== 'deleted'
+})
+
+const canUnstage = computed(() => {
+    if (!isGitIndex.value) return false
+    if (props.nodeType === 'directory') return true
+    return !!props.stagedStatus
+})
+
+const canDiscard = computed(() => {
+    if (!isGitIndex.value) return false
+    if (props.nodeType === 'directory') return true
+    return !!props.unstagedStatus && props.unstagedStatus !== 'untracked'
+})
+
+const canDelete = computed(() => {
+    if (!isGitIndex.value) return false
+    if (props.nodeType === 'directory') return false
+    return props.unstagedStatus === 'untracked'
+})
+
+const hasGitActions = computed(() =>
+    canStage.value || canUnstage.value || canDiscard.value || canDelete.value
+)
 
 function handleSelect(event) {
     const value = event.detail?.item?.value
@@ -82,49 +123,81 @@ watch([() => props.x, () => props.y], () => {
             </wa-dropdown-item>
             <wa-divider></wa-divider>
 
-            <wa-dropdown-item
-                v-if="nodeType === 'directory'"
-                value="create-file"
-                :disabled="writableLoading || !writable"
-            >
-                <wa-icon slot="icon" name="file-circle-plus"></wa-icon>
-                New file
-            </wa-dropdown-item>
-            <wa-dropdown-item
-                v-if="nodeType === 'directory'"
-                value="create-folder"
-                :disabled="writableLoading || !writable"
-            >
-                <wa-icon slot="icon" name="folder-plus"></wa-icon>
-                New folder
-            </wa-dropdown-item>
-            <wa-divider v-if="nodeType === 'directory'"></wa-divider>
+            <!-- ═══ Files mode: file operations ═══ -->
+            <template v-if="isFilesMode">
+                <wa-dropdown-item
+                    v-if="nodeType === 'directory'"
+                    value="create-file"
+                    :disabled="writableLoading || !writable"
+                >
+                    <wa-icon slot="icon" name="file-circle-plus"></wa-icon>
+                    New file
+                </wa-dropdown-item>
+                <wa-dropdown-item
+                    v-if="nodeType === 'directory'"
+                    value="create-folder"
+                    :disabled="writableLoading || !writable"
+                >
+                    <wa-icon slot="icon" name="folder-plus"></wa-icon>
+                    New folder
+                </wa-dropdown-item>
+                <wa-divider v-if="nodeType === 'directory'"></wa-divider>
 
-            <wa-dropdown-item
-                value="rename"
-                :disabled="writableLoading || !writable"
-            >
-                <wa-icon slot="icon" name="pencil"></wa-icon>
-                Rename
-            </wa-dropdown-item>
-            <wa-dropdown-item
-                value="move"
-                :disabled="writableLoading || !writable"
-            >
-                <wa-icon slot="icon" name="arrow-right-arrow-left"></wa-icon>
-                Move
-            </wa-dropdown-item>
-            <wa-dropdown-item
-                value="delete"
-                class="danger-item"
-                :disabled="writableLoading || !writable"
-            >
-                <wa-icon slot="icon" name="trash"></wa-icon>
-                Delete
-            </wa-dropdown-item>
+                <wa-dropdown-item
+                    value="rename"
+                    :disabled="writableLoading || !writable"
+                >
+                    <wa-icon slot="icon" name="pencil"></wa-icon>
+                    Rename
+                </wa-dropdown-item>
+                <wa-dropdown-item
+                    value="move"
+                    :disabled="writableLoading || !writable"
+                >
+                    <wa-icon slot="icon" name="arrow-right-arrow-left"></wa-icon>
+                    Move
+                </wa-dropdown-item>
+                <wa-dropdown-item
+                    value="delete"
+                    class="danger-item"
+                    :disabled="writableLoading || !writable"
+                >
+                    <wa-icon slot="icon" name="trash"></wa-icon>
+                    Delete
+                </wa-dropdown-item>
+                <wa-divider></wa-divider>
+            </template>
 
-            <wa-divider></wa-divider>
+            <!-- ═══ Git index mode: git operations ═══ -->
+            <template v-if="isGitIndex && hasGitActions">
+                <wa-dropdown-item v-if="canStage" value="git-stage">
+                    <wa-icon slot="icon" name="circle-plus"></wa-icon>
+                    {{ nodeType === 'directory' ? 'Stage all' : 'Stage' }}
+                </wa-dropdown-item>
+                <wa-dropdown-item v-if="canUnstage" value="git-unstage">
+                    <wa-icon slot="icon" name="circle-minus"></wa-icon>
+                    {{ nodeType === 'directory' ? 'Unstage all' : 'Unstage' }}
+                </wa-dropdown-item>
+                <wa-dropdown-item
+                    v-if="canDiscard"
+                    value="git-discard"
+                    class="danger-item"
+                >
+                    <wa-icon slot="icon" name="arrow-rotate-left"></wa-icon>
+                    {{ nodeType === 'directory' ? 'Discard all changes' : 'Discard changes' }}
+                </wa-dropdown-item>
+                <wa-dropdown-item
+                    v-if="canDelete"
+                    value="delete"
+                    class="danger-item"
+                >
+                    <wa-icon slot="icon" name="trash"></wa-icon>
+                    Delete
+                </wa-dropdown-item>
+                <wa-divider></wa-divider>
+            </template>
 
+            <!-- ═══ Copy actions (always available) ═══ -->
             <wa-dropdown-item value="copy-name">
                 <wa-icon slot="icon" name="copy"></wa-icon>
                 <div>Copy name</div>

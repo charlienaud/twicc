@@ -423,6 +423,42 @@ function handleOptionsSelect(value) {
     }
 }
 
+const contextMenuMode = computed(() => {
+    if (isViewingIndex.value) return 'git-index'
+    return 'git-commit'
+})
+
+async function handleGitAction(action, { path }) {
+    const endpoint = {
+        'git-stage': 'git-stage',
+        'git-unstage': 'git-unstage',
+        'git-discard': 'git-discard',
+    }[action]
+    if (!endpoint) return
+
+    try {
+        const url = `${apiPrefix.value}/${endpoint}/`
+        const body = { path }
+        if (effectiveGitDirectory.value) {
+            body.git_dir = effectiveGitDirectory.value
+        }
+        const res = await apiFetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            console.error(`Git ${action} failed:`, data.error || res.status)
+        }
+    } catch (e) {
+        console.error(`Git ${action} error:`, e)
+    }
+
+    _preserveFileSelection = true
+    await refreshIndexFiles()
+}
+
 function doSearch(query) {
     const tree = displayTree.value
     if (!tree) return null
@@ -1037,8 +1073,14 @@ onMounted(() => {
                         :is-mobile="isMobile"
                         :commented-paths="commentedPaths"
                         mode="git"
+                        enable-context-menu
+                        :context-menu-mode="contextMenuMode"
+                        :git-directory="effectiveGitDirectory"
                         @refresh="refreshIndexFiles"
                         @option-select="handleOptionsSelect"
+                        @git-stage="handleGitAction('git-stage', $event)"
+                        @git-unstage="handleGitAction('git-unstage', $event)"
+                        @git-discard="handleGitAction('git-discard', $event)"
                     >
                         <template #options-before>
                             <wa-dropdown-item

@@ -355,12 +355,17 @@ function handleContextMenu(event) {
 }
 
 function emitContextMenu(x, y) {
+    const effectiveNode = compact.value.effectiveNode
+    const node = effectiveNode.type ? effectiveNode : props.node
     emit('context-menu', {
         path: nodePath.value,
-        name: compact.value.effectiveNode.name || props.node.name,
-        type: compact.value.effectiveNode.type || props.node.type,
+        name: node.name || props.node.name,
+        type: node.type || props.node.type,
         x,
         y,
+        stagedStatus: node.staged_status || null,
+        unstagedStatus: node.unstaged_status || null,
+        status: node.status || null,
     })
 }
 
