@@ -81,7 +81,8 @@ def get_file_content(file_path):
     except OSError:
         return {"error": "Cannot read file", "size": size, "binary": False}
 
-    return {"content": content, "size": size, "binary": False}
+    writable = os.access(file_path, os.W_OK)
+    return {"content": content, "size": size, "binary": False, "writable": writable}
 
 
 def write_file_content(file_path, content):

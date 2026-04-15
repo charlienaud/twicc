@@ -166,6 +166,7 @@ onBeforeUnmount(() => {
 
 // --- Edit mode state ---
 const isEditing = ref(false)
+const isWritable = ref(false)
 const saving = ref(false)
 const saveError = ref(null)
 
@@ -280,6 +281,7 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
     }
     error.value = null
     saveError.value = null
+    isWritable.value = false
     isBinary.value = false
     imageSrc.value = null
 
@@ -312,6 +314,7 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
 
         currentContent.value = data.content
         fileSize.value = data.size
+        isWritable.value = !!data.writable
         hasLoadedOnce.value = true
         // Reset dirty state after a tick so CodeMirror has processed the new content
         nextTick(() => codeEditorRef.value?.resetDirty())
@@ -558,7 +561,7 @@ function goToNextDiff() {
                 </wa-button>
                 <AppTooltip :for="viewInFilesButtonId">View in Files tab</AppTooltip>
                 <!-- Edit controls: hidden in read-only diff mode (commit diffs) -->
-                <template v-if="!diffMode || !diffReadOnly">
+                <template v-if="(!diffMode || !diffReadOnly) && isWritable">
                     <wa-switch
                         :checked="isEditing"
                         size="small"
