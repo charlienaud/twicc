@@ -429,7 +429,8 @@ const selectedFile = computed(() => fileTreePanelRef.value?.selectedFile ?? null
  */
 const selectedAbsPath = computed(() => {
     if (!selectedFile.value || !directory.value) return null
-    return `${directory.value}/${selectedFile.value}`
+    const dir = directory.value
+    return `${dir === '/' ? '' : dir}/${selectedFile.value}`
 })
 
 // ─── Split panel position (KeepAlive-safe) ──────────────────────────────────

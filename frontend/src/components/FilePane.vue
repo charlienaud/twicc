@@ -663,13 +663,6 @@ function goToNextDiff() {
             </div>
         </div>
 
-        <!-- Save error message (overlays above the editor) -->
-        <div v-if="saveError" class="editor-overlay">
-            <wa-callout variant="danger" size="small">
-                {{ saveError }}
-            </wa-callout>
-        </div>
-
         <!-- Content area: editor is always mounted once, overlays sit on top -->
         <div ref="editorAreaRef" class="editor-area">
             <!-- Markdown preview (when toggled on for .md files) -->
@@ -736,6 +729,13 @@ function goToNextDiff() {
                     <span>Binary file ({{ formatSize(fileSize) }}) cannot be displayed</span>
                 </template>
             </div>
+        </div>
+
+        <!-- Save error message (overlays above the editor) -->
+        <div v-if="saveError" class="editor-overlay">
+            <wa-callout variant="danger" size="small">
+                {{ saveError }}
+            </wa-callout>
         </div>
     </div>
 </template>
