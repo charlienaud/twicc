@@ -391,11 +391,15 @@ function handleOptionsSelect(value) {
 
 /**
  * Refresh: re-fetch the tree from the root, and re-run the search if active.
- * After refresh, scrolls back to the previously selected file. If it no longer
- * exists, clears the selection and scrolls to the root.
+ * After refresh, scrolls back to the previously selected file (or a specific
+ * target path if provided). If the target no longer exists, clears the
+ * selection and scrolls to the root.
+ *
+ * @param {object} [hints] - Optional hints from file operations.
+ * @param {string} [hints.scrollTo] - Absolute path to scroll to after refresh.
  */
-async function refresh() {
-    const fileToScroll = fileTreePanelRef.value?.selectedAbsPath
+async function refresh(hints) {
+    const scrollTarget = hints?.scrollTo || fileTreePanelRef.value?.selectedAbsPath
 
     await fetchTree(directory.value)
 
@@ -403,17 +407,14 @@ async function refresh() {
         fileTreePanelRef.value.rerunSearch()
     }
 
-    // Scroll to previously selected file in the refreshed tree
-    if (fileToScroll && tree.value) {
-        const found = await fileTreePanelRef.value?.scrollToPath(fileToScroll)
+    if (scrollTarget && tree.value) {
+        const found = await fileTreePanelRef.value?.scrollToPath(scrollTarget)
         if (!found) {
-            // File no longer exists — clear selection and scroll to root
             fileTreePanelRef.value.selectedFile.value = null
             await fileTreePanelRef.value?.scrollToPath(directory.value)
         }
     }
 
-    // Reload the open file content (skips if editing with unsaved changes)
     filePaneRef.value?.reload()
 }
 

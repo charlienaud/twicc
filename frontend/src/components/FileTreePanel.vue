@@ -839,6 +839,34 @@ async function scrollToPath(absolutePath) {
     return true
 }
 
+// ─── Tree node lookup (for local mutations) ────────────────────────────────
+
+/**
+ * Walk the tree data to find a node by its absolute path.
+ * Returns { node, parent, index } or null if not found.
+ */
+function findNodeInTree(absolutePath) {
+    if (!props.tree || !props.rootPath) return null
+    if (absolutePath === props.rootPath) {
+        return { node: props.tree, parent: null, index: -1 }
+    }
+    const prefix = props.rootPath + '/'
+    if (!absolutePath.startsWith(prefix)) return null
+    const segments = absolutePath.slice(prefix.length).split('/')
+
+    let current = props.tree
+    for (let i = 0; i < segments.length; i++) {
+        if (!current.children) return null
+        const idx = current.children.findIndex(c => c.name === segments[i])
+        if (idx === -1) return null
+        if (i === segments.length - 1) {
+            return { node: current.children[idx], parent: current, index: idx }
+        }
+        current = current.children[idx]
+    }
+    return null
+}
+
 // ─── Context menu ───────────────────────────────────────────────────────────
 
 const contextMenu = ref({
@@ -943,10 +971,11 @@ function handleMove() {
 }
 
 function onMoved({ oldPath, newPath }) {
-    if (selectedAbsPath.value === oldPath || selectedAbsPath.value?.startsWith(oldPath + '/')) {
-        selectedFile.value = null
+    const wasSelected = selectedAbsPath.value === oldPath || selectedAbsPath.value?.startsWith(oldPath + '/')
+    if (wasSelected) {
+        onFileSelect(newPath)
     }
-    emit('refresh')
+    emit('refresh', { scrollTo: newPath })
 }
 
 function handleCreateFile() {
@@ -963,22 +992,30 @@ function handleCreateFolder() {
     })
 }
 
-function onCreated() {
-    emit('refresh')
+function onCreated({ newPath }) {
+    emit('refresh', { scrollTo: newPath })
 }
 
-function onRenamed({ oldPath, newPath }) {
+function onRenamed({ oldPath, newPath, newName }) {
+    const found = findNodeInTree(oldPath)
+    if (found && found.parent) {
+        found.node.name = newName
+    }
     if (selectedAbsPath.value === oldPath) {
         onFileSelect(newPath)
     }
-    emit('refresh')
 }
 
 function onDeleted({ path }) {
     if (selectedAbsPath.value === path || selectedAbsPath.value?.startsWith(path + '/')) {
         selectedFile.value = null
     }
-    emit('refresh')
+    const found = findNodeInTree(path)
+    if (found && found.parent) {
+        found.parent.children.splice(found.index, 1)
+    } else {
+        emit('refresh')
+    }
 }
 
 // ─── Expose methods and state for parent access ─────────────────────────────
