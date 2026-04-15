@@ -2,6 +2,7 @@
 import { ref, watch, computed, nextTick, useId, inject, onBeforeUnmount } from 'vue'
 import { apiFetch } from '../utils/api'
 import { useSettingsStore } from '../stores/settings'
+import { usePanZoom } from '../composables/usePanZoom'
 import MarkdownContent from './MarkdownContent.vue'
 import AppTooltip from './AppTooltip.vue'
 import CodeEditor from './CodeEditor.vue'
@@ -116,6 +117,10 @@ const settingsStore = useSettingsStore()
 // --- CodeMirror editor instances ---
 const codeEditorRef = ref(null)
 const diffEditorRef = ref(null)
+
+// --- Image pan/zoom ---
+const imageRef = ref(null)
+const { reset: resetZoom } = usePanZoom(imageRef)
 
 // --- File content state ---
 const currentContent = ref('')   // content currently in the editor
@@ -337,6 +342,8 @@ watch(() => props.filePath, async (newPath) => {
         isEditing.value = false
         return
     }
+
+    resetZoom()
 
     // Reset edit mode and preview modes when switching files
     isEditing.value = false
@@ -678,6 +685,7 @@ function goToNextDiff() {
             <!-- Image preview (binary images or SVG preview) -->
             <div v-if="showImagePreview" class="image-preview-container">
                 <img
+                    ref="imageRef"
                     :src="imageSrc || svgPreviewUrl"
                     :alt="fileName"
                     class="image-preview"
@@ -848,10 +856,8 @@ function goToNextDiff() {
 .image-preview-container {
     position: absolute;
     inset: 0;
-    overflow: auto;
+    overflow: hidden;
     display: flex;
-    align-items: center;
-    justify-content: center;
     padding: var(--wa-space-m);
 }
 
@@ -859,6 +865,8 @@ function goToNextDiff() {
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
+    touch-action: none;
+    margin: auto;
 }
 
 .editor-overlay {

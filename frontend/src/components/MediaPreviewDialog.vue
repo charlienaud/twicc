@@ -2,8 +2,9 @@
 // MediaPreviewDialog.vue - Full-size preview dialog for media items (images, text, PDF).
 // Supports prev/next navigation via arrow keys and buttons.
 // Accepts a normalized MediaItem[] format shared by both draft attachments and conversation messages.
-import { ref, computed, onBeforeUnmount, useId } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, useId } from 'vue'
 import AppTooltip from './AppTooltip.vue'
+import { usePanZoom } from '../composables/usePanZoom'
 
 const props = defineProps({
     items: {
@@ -20,6 +21,12 @@ const emit = defineEmits(['remove'])
 
 const dialogRef = ref(null)
 const currentIndex = ref(0)
+const imageRef = ref(null)
+const { reset: resetZoom } = usePanZoom(imageRef)
+
+watch(currentIndex, () => {
+    resetZoom()
+})
 const prevButtonId = useId()
 const nextButtonId = useId()
 
@@ -126,6 +133,7 @@ function onKeyDown(event) {
  */
 function open(index = 0) {
     currentIndex.value = index
+    resetZoom()
     if (dialogRef.value) {
         dialogRef.value.open = true
     }
@@ -174,6 +182,7 @@ defineExpose({ open, close })
             <!-- Image preview -->
             <img
                 v-if="currentItem?.type === 'image'"
+                ref="imageRef"
                 :src="currentItem.src"
                 :alt="currentItem.name || 'Image'"
                 class="preview-image"
@@ -232,7 +241,7 @@ defineExpose({ open, close })
  *   so we don't need to set our own viewport constraints on the panel.
  * - The image constrains itself to the available space inside the dialog
  *   using max-width/max-height with 100%.
- * - The body part has no overflow:hidden - images are never truncated.
+ * - The preview-content container uses overflow:hidden to clip zoomed images.
  */
 .media-preview-dialog {
     --width: fit-content;
@@ -257,6 +266,7 @@ defineExpose({ open, close })
     align-items: center;
     justify-content: center;
     position: relative;
+    overflow: hidden;
 }
 
 .preview-image {
@@ -264,6 +274,7 @@ defineExpose({ open, close })
     max-width: 100%;
     max-height: calc(90dvh - 100px);
     object-fit: contain;
+    touch-action: none;
 }
 
 .preview-text {
