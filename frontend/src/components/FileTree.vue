@@ -112,7 +112,7 @@ const props = defineProps({
     },
 })
 
-const emit = defineEmits(['select', 'focus'])
+const emit = defineEmits(['select', 'focus', 'context-menu'])
 
 // API prefix: project-level for drafts, session-level otherwise
 const apiPrefix = computed(() => {
@@ -346,6 +346,51 @@ const commentCount = computed(() => {
     if (props.commentedPaths.size === 0) return 0
     return props.commentedPaths.has(nodePath.value) ? 1 : 0
 })
+
+// ─── Context menu (right-click + long press for iOS) ────────────────────────
+
+function handleContextMenu(event) {
+    event.preventDefault()
+    emitContextMenu(event.clientX, event.clientY)
+}
+
+function emitContextMenu(x, y) {
+    emit('context-menu', {
+        path: nodePath.value,
+        name: compact.value.effectiveNode.name || props.node.name,
+        type: compact.value.effectiveNode.type || props.node.type,
+        x,
+        y,
+    })
+}
+
+let longPressTimer = null
+let longPressTriggered = false
+
+function onTouchStart(event) {
+    if (event.touches.length !== 1) return
+    longPressTriggered = false
+    const touch = event.touches[0]
+    const x = touch.clientX
+    const y = touch.clientY
+    longPressTimer = setTimeout(() => {
+        longPressTriggered = true
+        emitContextMenu(x, y)
+    }, 500)
+}
+
+function onTouchMove() {
+    clearTimeout(longPressTimer)
+    longPressTimer = null
+}
+
+function onTouchEnd(event) {
+    clearTimeout(longPressTimer)
+    longPressTimer = null
+    if (longPressTriggered) {
+        event.preventDefault()
+    }
+}
 </script>
 
 <template>
@@ -368,6 +413,10 @@ const commentCount = computed(() => {
             role="treeitem"
             :tabindex="isFocused ? 0 : -1"
             @click="handleClick"
+            @contextmenu="handleContextMenu"
+            @touchstart.passive="onTouchStart"
+            @touchmove.passive="onTouchMove"
+            @touchend="onTouchEnd"
         >
             <!-- Loading spinner (replaces icon while fetching) -->
             <wa-spinner v-if="isLoading" class="node-spinner"></wa-spinner>
@@ -412,6 +461,7 @@ const commentCount = computed(() => {
                 :commented-paths="commentedPaths"
                 @select="(path) => emit('select', path)"
                 @focus="(path) => emit('focus', path)"
+                @context-menu="(data) => emit('context-menu', data)"
             />
         </div>
     </div>

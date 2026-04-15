@@ -853,7 +853,7 @@ def standalone_file_content(request):
     Unlike the project-scoped file-content endpoint, this does not require
     a project. Supports an optional root parameter for server-side path restriction.
     """
-    from twicc.file_content import get_file_content, write_file_content
+    from twicc.file_content import get_file_content, get_file_meta, write_file_content
 
     # PUT: write file content
     if request.method == "PUT":
@@ -905,6 +905,12 @@ def standalone_file_content(request):
     if error:
         return error
 
+    if request.GET.get("meta_only"):
+        result = get_file_meta(file_path)
+        if result.get("error"):
+            return JsonResponse(result, status=404)
+        return JsonResponse(result)
+
     if not os.path.isfile(file_path):
         return JsonResponse({"error": "File not found"}, status=404)
 
@@ -913,6 +919,92 @@ def standalone_file_content(request):
         return JsonResponse(result, status=400)
 
     return JsonResponse(result)
+
+
+def _standalone_file_modify(request, action):
+    """Shared logic for standalone file rename, delete, move and create operations."""
+    from twicc.file_content import create_path, delete_path, move_path, rename_path
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = orjson.loads(request.body)
+    except orjson.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    root = (data.get("root") or "").strip()
+
+    if action == "create":
+        parent_dir = (data.get("parent_dir") or "").strip()
+        if not parent_dir:
+            return JsonResponse({"error": "Missing 'parent_dir' field"}, status=400)
+        parent_dir = os.path.normpath(parent_dir)
+        if not os.path.isabs(parent_dir):
+            return JsonResponse({"error": "Path must be absolute"}, status=400)
+        error = validate_standalone_root(parent_dir, root)
+        if error:
+            return error
+        name = (data.get("name") or "").strip()
+        if not name:
+            return JsonResponse({"error": "Missing 'name' field"}, status=400)
+        kind = data.get("kind", "file")
+        if kind not in ("file", "directory"):
+            return JsonResponse({"error": "Invalid 'kind' field"}, status=400)
+        result = create_path(parent_dir, name, kind)
+    else:
+        file_path = (data.get("path") or "").strip()
+        if not file_path:
+            return JsonResponse({"error": "Missing 'path' field"}, status=400)
+        file_path = os.path.normpath(file_path)
+        if not os.path.isabs(file_path):
+            return JsonResponse({"error": "Path must be absolute"}, status=400)
+        error = validate_standalone_root(file_path, root)
+        if error:
+            return error
+
+        if action == "rename":
+            new_name = (data.get("new_name") or "").strip()
+            if not new_name:
+                return JsonResponse({"error": "Missing 'new_name' field"}, status=400)
+            result = rename_path(file_path, new_name)
+        elif action == "move":
+            destination_dir = (data.get("destination_dir") or "").strip()
+            if not destination_dir:
+                return JsonResponse({"error": "Missing 'destination_dir' field"}, status=400)
+            destination_dir = os.path.normpath(destination_dir)
+            if not os.path.isabs(destination_dir):
+                return JsonResponse({"error": "Destination must be absolute"}, status=400)
+            error = validate_standalone_root(destination_dir, root)
+            if error:
+                return error
+            result = move_path(file_path, destination_dir)
+        else:
+            result = delete_path(file_path)
+
+    if result.get("error"):
+        return JsonResponse(result, status=400)
+    return JsonResponse(result)
+
+
+def standalone_file_rename(request):
+    """POST: rename a file or directory (standalone)."""
+    return _standalone_file_modify(request, "rename")
+
+
+def standalone_file_delete(request):
+    """POST: delete a file or directory (standalone)."""
+    return _standalone_file_modify(request, "delete")
+
+
+def standalone_file_move(request):
+    """POST: move a file or directory (standalone)."""
+    return _standalone_file_modify(request, "move")
+
+
+def standalone_file_create(request):
+    """POST: create a new file or directory (standalone)."""
+    return _standalone_file_modify(request, "create")
 
 
 def file_content(request, project_id, session_id=None):
@@ -924,7 +1016,7 @@ def file_content(request, project_id, session_id=None):
     GET: read file content (existing behavior).
     PUT: write file content (full replacement).
     """
-    from twicc.file_content import get_file_content, write_file_content
+    from twicc.file_content import get_file_content, get_file_meta, write_file_content
     from twicc.file_tree import validate_path
 
     # PUT: write file content
@@ -962,8 +1054,23 @@ def file_content(request, project_id, session_id=None):
     if not file_path:
         return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
 
+    normalized = os.path.normpath(file_path)
+
+    # meta_only: lightweight writable check for files and directories.
+    # For directories, validate the path itself (not dirname) since the
+    # directory may be an allowed root whose parent is outside scope.
+    if request.GET.get("meta_only"):
+        check_dir = normalized if os.path.isdir(normalized) else os.path.dirname(normalized)
+        _session, _check_dir, error = validate_path(project_id, check_dir, session_id=session_id)
+        if error:
+            return error
+        result = get_file_meta(normalized)
+        if result.get("error"):
+            return JsonResponse(result, status=404)
+        return JsonResponse(result)
+
     # Validate that the file's directory is within allowed project/session paths
-    dir_path = os.path.dirname(os.path.normpath(file_path))
+    dir_path = os.path.dirname(normalized)
     session, dir_path, error = validate_path(
         project_id, dir_path, session_id=session_id
     )
@@ -971,7 +1078,6 @@ def file_content(request, project_id, session_id=None):
         return error
 
     # Now check the file itself exists
-    normalized = os.path.normpath(file_path)
     if not os.path.isfile(normalized):
         return JsonResponse({"error": "File not found"}, status=404)
 
@@ -979,6 +1085,106 @@ def file_content(request, project_id, session_id=None):
     if result.get("error"):
         return JsonResponse(result, status=400)
 
+    return JsonResponse(result)
+
+
+def _file_modify(request, project_id, session_id, action):
+    """Shared logic for file rename, delete and move operations.
+
+    Create is handled separately in file_create() because it validates the
+    parent directory (not the path itself) and takes different parameters.
+    """
+    from twicc.file_content import delete_path, move_path, rename_path
+    from twicc.file_tree import validate_path
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = orjson.loads(request.body)
+    except orjson.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    file_path = (data.get("path") or "").strip()
+    if not file_path:
+        return JsonResponse({"error": "Missing 'path' field"}, status=400)
+
+    normalized = os.path.normpath(file_path)
+    dir_path = os.path.dirname(normalized)
+    _session, dir_path, error = validate_path(project_id, dir_path, session_id=session_id)
+    if error:
+        return error
+
+    if action == "rename":
+        new_name = (data.get("new_name") or "").strip()
+        if not new_name:
+            return JsonResponse({"error": "Missing 'new_name' field"}, status=400)
+        result = rename_path(normalized, new_name)
+    elif action == "move":
+        destination_dir = (data.get("destination_dir") or "").strip()
+        if not destination_dir:
+            return JsonResponse({"error": "Missing 'destination_dir' field"}, status=400)
+        dest_normalized = os.path.normpath(destination_dir)
+        _session2, _dir_path2, error2 = validate_path(project_id, dest_normalized, session_id=session_id)
+        if error2:
+            return error2
+        result = move_path(normalized, dest_normalized)
+    else:
+        result = delete_path(normalized)
+
+    if result.get("error"):
+        return JsonResponse(result, status=400)
+    return JsonResponse(result)
+
+
+def file_rename(request, project_id, session_id=None):
+    """POST: rename a file or directory."""
+    return _file_modify(request, project_id, session_id, "rename")
+
+
+def file_delete(request, project_id, session_id=None):
+    """POST: delete a file or directory."""
+    return _file_modify(request, project_id, session_id, "delete")
+
+
+def file_move(request, project_id, session_id=None):
+    """POST: move a file or directory to a different directory."""
+    return _file_modify(request, project_id, session_id, "move")
+
+
+def file_create(request, project_id, session_id=None):
+    """POST: create a new file or directory."""
+    from twicc.file_content import create_path
+    from twicc.file_tree import validate_path
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = orjson.loads(request.body)
+    except orjson.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    parent_dir = (data.get("parent_dir") or "").strip()
+    if not parent_dir:
+        return JsonResponse({"error": "Missing 'parent_dir' field"}, status=400)
+
+    name = (data.get("name") or "").strip()
+    if not name:
+        return JsonResponse({"error": "Missing 'name' field"}, status=400)
+
+    kind = data.get("kind", "file")
+    if kind not in ("file", "directory"):
+        return JsonResponse({"error": "Invalid 'kind' field"}, status=400)
+
+    normalized = os.path.normpath(parent_dir)
+    _session, _dir_path, error = validate_path(project_id, normalized, session_id=session_id)
+    if error:
+        return error
+
+    result = create_path(normalized, name, kind)
+    if result.get("error"):
+        return JsonResponse(result, status=400)
     return JsonResponse(result)
 
 

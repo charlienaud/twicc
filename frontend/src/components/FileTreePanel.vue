@@ -32,7 +32,13 @@
  */
 
 import { ref, computed, watch, nextTick, shallowRef, useId } from 'vue'
+import { apiFetch } from '../utils/api'
 import FileTree from './FileTree.vue'
+import FileTreeContextMenu from './FileTreeContextMenu.vue'
+import FileRenameDialog from './FileRenameDialog.vue'
+import FileDeleteDialog from './FileDeleteDialog.vue'
+import FileCreateDialog from './FileCreateDialog.vue'
+import FileMoveDialog from './FileMoveDialog.vue'
 import AppTooltip from './AppTooltip.vue'
 
 const props = defineProps({
@@ -117,6 +123,10 @@ const props = defineProps({
     commentedPaths: {
         type: Set,
         default: () => new Set(),
+    },
+    enableContextMenu: {
+        type: Boolean,
+        default: false,
     },
 })
 
@@ -829,6 +839,148 @@ async function scrollToPath(absolutePath) {
     return true
 }
 
+// ─── Context menu ───────────────────────────────────────────────────────────
+
+const contextMenu = ref({
+    visible: false,
+    x: 0,
+    y: 0,
+    path: '',
+    name: '',
+    type: 'file',
+    writable: false,
+    writableLoading: false,
+})
+
+const renameDialogRef = ref(null)
+const deleteDialogRef = ref(null)
+const createDialogRef = ref(null)
+const moveDialogRef = ref(null)
+
+const apiPrefix = computed(() => {
+    if (!props.projectId) return '/api'
+    if (props.isDraft || !props.sessionId) return `/api/projects/${props.projectId}`
+    return `/api/projects/${props.projectId}/sessions/${props.sessionId}`
+})
+
+async function onContextMenu(data) {
+    contextMenu.value = {
+        visible: true,
+        x: data.x,
+        y: data.y,
+        path: data.path,
+        name: data.name,
+        type: data.type,
+        writable: false,
+        writableLoading: true,
+    }
+    try {
+        const res = await apiFetch(
+            `${apiPrefix.value}/file-content/?path=${encodeURIComponent(data.path)}&meta_only=true`
+        )
+        if (res.ok) {
+            const meta = await res.json()
+            if (contextMenu.value.path === data.path && contextMenu.value.visible) {
+                contextMenu.value.writable = meta.writable
+            }
+        }
+    } catch {
+        // leave writable as false
+    } finally {
+        if (contextMenu.value.path === data.path && contextMenu.value.visible) {
+            contextMenu.value.writableLoading = false
+        }
+    }
+}
+
+function closeContextMenu() {
+    contextMenu.value.visible = false
+}
+
+function computeRelativePath(absolutePath) {
+    if (!props.rootPath) return absolutePath
+    const prefix = props.rootPath + '/'
+    return absolutePath.startsWith(prefix)
+        ? absolutePath.slice(prefix.length)
+        : absolutePath
+}
+
+function handleRename() {
+    renameDialogRef.value?.open({
+        path: contextMenu.value.path,
+        name: contextMenu.value.name,
+        type: contextMenu.value.type,
+    })
+}
+
+function handleDelete() {
+    deleteDialogRef.value?.open({
+        path: contextMenu.value.path,
+        name: contextMenu.value.name,
+        type: contextMenu.value.type,
+    })
+}
+
+function handleCopyName() {
+    navigator.clipboard.writeText(contextMenu.value.name)
+}
+
+function handleCopyRelativePath() {
+    navigator.clipboard.writeText(computeRelativePath(contextMenu.value.path))
+}
+
+function handleCopyFullPath() {
+    navigator.clipboard.writeText(contextMenu.value.path)
+}
+
+function handleMove() {
+    moveDialogRef.value?.open({
+        path: contextMenu.value.path,
+        name: contextMenu.value.name,
+        type: contextMenu.value.type,
+        treeRootPath: props.rootPath,
+    })
+}
+
+function onMoved({ oldPath, newPath }) {
+    if (selectedAbsPath.value === oldPath || selectedAbsPath.value?.startsWith(oldPath + '/')) {
+        selectedFile.value = null
+    }
+    emit('refresh')
+}
+
+function handleCreateFile() {
+    createDialogRef.value?.open({
+        path: contextMenu.value.path,
+        createKind: 'file',
+    })
+}
+
+function handleCreateFolder() {
+    createDialogRef.value?.open({
+        path: contextMenu.value.path,
+        createKind: 'directory',
+    })
+}
+
+function onCreated() {
+    emit('refresh')
+}
+
+function onRenamed({ oldPath, newPath }) {
+    if (selectedAbsPath.value === oldPath) {
+        onFileSelect(newPath)
+    }
+    emit('refresh')
+}
+
+function onDeleted({ path }) {
+    if (selectedAbsPath.value === path || selectedAbsPath.value?.startsWith(path + '/')) {
+        selectedFile.value = null
+    }
+    emit('refresh')
+}
+
 // ─── Expose methods and state for parent access ─────────────────────────────
 
 defineExpose({
@@ -981,6 +1133,7 @@ defineExpose({
                         :commented-paths="commentedPaths"
                         @select="onFileSelect"
                         @focus="onNodeFocus"
+                        @context-menu="enableContextMenu ? onContextMenu($event) : null"
                     />
                 </div>
                 <div v-if="isSearching && searchTruncated" class="search-truncated">
@@ -988,6 +1141,57 @@ defineExpose({
                 </div>
             </template>
         </div>
+
+        <!-- Context menu + dialogs (disabled in nested contexts like move dialog to avoid infinite recursion) -->
+        <template v-if="enableContextMenu">
+            <FileTreeContextMenu
+                :visible="contextMenu.visible"
+                :x="contextMenu.x"
+                :y="contextMenu.y"
+                :node-name="contextMenu.name"
+                :node-type="contextMenu.type"
+                :relative-path="computeRelativePath(contextMenu.path)"
+                :full-path="contextMenu.path"
+                :writable="contextMenu.writable"
+                :writable-loading="contextMenu.writableLoading"
+                @close="closeContextMenu"
+                @create-file="handleCreateFile"
+                @create-folder="handleCreateFolder"
+                @rename="handleRename"
+                @move="handleMove"
+                @delete="handleDelete"
+                @copy-name="handleCopyName"
+                @copy-relative-path="handleCopyRelativePath"
+                @copy-full-path="handleCopyFullPath"
+            />
+            <FileRenameDialog
+                v-if="apiPrefix"
+                ref="renameDialogRef"
+                :api-prefix="apiPrefix"
+                @renamed="onRenamed"
+            />
+            <FileDeleteDialog
+                v-if="apiPrefix"
+                ref="deleteDialogRef"
+                :api-prefix="apiPrefix"
+                @deleted="onDeleted"
+            />
+            <FileCreateDialog
+                v-if="apiPrefix"
+                ref="createDialogRef"
+                :api-prefix="apiPrefix"
+                @created="onCreated"
+            />
+            <FileMoveDialog
+                v-if="apiPrefix"
+                ref="moveDialogRef"
+                :api-prefix="apiPrefix"
+                :project-id="projectId"
+                :session-id="sessionId"
+                :is-draft="isDraft"
+                @moved="onMoved"
+            />
+        </template>
     </div>
 </template>
 

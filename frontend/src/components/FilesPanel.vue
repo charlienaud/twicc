@@ -628,6 +628,7 @@ defineExpose({ revealFile, setRootByPath })
                 :active="active"
                 :is-mobile="isMobile"
                 :commented-paths="commentedPaths"
+                enable-context-menu
                 mode="files"
                 @refresh="refresh"
                 @option-select="handleOptionsSelect"

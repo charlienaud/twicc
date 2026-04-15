@@ -5,6 +5,7 @@ Extracted following the same pattern as file_tree.py — views stay thin HTTP wr
 
 import base64
 import os
+import shutil
 
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
@@ -37,6 +38,21 @@ def _get_image_src(file_path, size):
         return None
     encoded = base64.b64encode(raw).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
+
+
+def get_file_meta(file_path):
+    """Return lightweight metadata for a file or directory (no content read).
+
+    Returns:
+        {"writable": bool, "type": "file"|"directory"}
+        or {"error": str} on failure.
+    """
+    if not os.path.exists(file_path):
+        return {"error": "Path not found"}
+    path_type = "directory" if os.path.isdir(file_path) else "file"
+    parent_dir = os.path.dirname(file_path)
+    writable = os.access(parent_dir, os.W_OK) and os.access(file_path, os.W_OK)
+    return {"writable": writable, "type": path_type}
 
 
 def get_file_content(file_path):
@@ -111,5 +127,139 @@ def write_file_content(file_path, content):
             f.write(content)
     except OSError as e:
         return {"error": f"Cannot write file: {e}"}
+
+    return {"ok": True}
+
+
+def create_path(parent_dir, name, kind):
+    """Create a new file or directory inside parent_dir.
+
+    Args:
+        parent_dir: absolute path of the parent directory
+        name: name of the new file or directory
+        kind: "file" or "directory"
+
+    Returns:
+        {"ok": True, "new_path": str} on success
+        {"error": str} on failure
+    """
+    if "/" in name or "\\" in name or not name.strip():
+        return {"error": "Invalid name"}
+
+    if not os.path.isdir(parent_dir):
+        return {"error": "Parent directory not found"}
+
+    if not os.access(parent_dir, os.W_OK):
+        return {"error": "Permission denied"}
+
+    new_path = os.path.join(parent_dir, name)
+    if os.path.exists(new_path):
+        return {"error": "A file or directory with this name already exists"}
+
+    try:
+        if kind == "directory":
+            os.makedirs(new_path)
+        else:
+            with open(new_path, "w", encoding="utf-8") as f:
+                f.write("")
+    except OSError as e:
+        return {"error": f"Cannot create: {e}"}
+
+    return {"ok": True, "new_path": new_path}
+
+
+def move_path(source_path, destination_dir):
+    """Move a file or directory into a different directory.
+
+    Returns:
+        {"ok": True, "new_path": str} on success
+        {"error": str} on failure
+    """
+    if not os.path.exists(source_path):
+        return {"error": "Source not found"}
+
+    if not os.path.isdir(destination_dir):
+        return {"error": "Destination directory not found"}
+
+    source_parent = os.path.dirname(source_path)
+    if os.path.realpath(source_parent) == os.path.realpath(destination_dir):
+        return {"error": "Source is already in this directory"}
+
+    if not os.access(source_parent, os.W_OK):
+        return {"error": "Permission denied on source directory"}
+
+    if not os.access(destination_dir, os.W_OK):
+        return {"error": "Permission denied on destination directory"}
+
+    name = os.path.basename(source_path)
+    new_path = os.path.join(destination_dir, name)
+    if os.path.exists(new_path):
+        return {"error": f"'{name}' already exists in the destination directory"}
+
+    # Prevent moving a directory into itself or a subdirectory of itself
+    if os.path.isdir(source_path):
+        real_src = os.path.realpath(source_path)
+        real_dst = os.path.realpath(destination_dir)
+        if real_dst == real_src or real_dst.startswith(real_src + os.sep):
+            return {"error": "Cannot move a directory into itself"}
+
+    try:
+        shutil.move(source_path, new_path)
+    except OSError as e:
+        return {"error": f"Cannot move: {e}"}
+
+    return {"ok": True, "new_path": new_path}
+
+
+def rename_path(old_path, new_name):
+    """Rename a file or directory (same parent directory, new name).
+
+    Returns:
+        {"ok": True, "new_path": str} on success
+        {"error": str} on failure
+    """
+    if not os.path.exists(old_path):
+        return {"error": "Path not found"}
+
+    if "/" in new_name or "\\" in new_name or not new_name.strip():
+        return {"error": "Invalid name"}
+
+    parent_dir = os.path.dirname(old_path)
+    if not os.access(parent_dir, os.W_OK):
+        return {"error": "Permission denied"}
+
+    new_path = os.path.join(parent_dir, new_name)
+    if os.path.exists(new_path):
+        return {"error": "A file or directory with this name already exists"}
+
+    try:
+        os.rename(old_path, new_path)
+    except OSError as e:
+        return {"error": f"Cannot rename: {e}"}
+
+    return {"ok": True, "new_path": new_path}
+
+
+def delete_path(file_path):
+    """Delete a file or directory (recursive for directories).
+
+    Returns:
+        {"ok": True} on success
+        {"error": str} on failure
+    """
+    if not os.path.exists(file_path):
+        return {"error": "Path not found"}
+
+    parent_dir = os.path.dirname(file_path)
+    if not os.access(parent_dir, os.W_OK):
+        return {"error": "Permission denied"}
+
+    try:
+        if os.path.isdir(file_path):
+            shutil.rmtree(file_path)
+        else:
+            os.remove(file_path)
+    except OSError as e:
+        return {"error": f"Cannot delete: {e}"}
 
     return {"ok": True}
