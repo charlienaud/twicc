@@ -1289,12 +1289,25 @@ async function handleForwardedDrop({ files, text }) {
 
 const textSelectionCommentRef = ref(null)
 const textSelectionText = ref('')
-const textSelectionPosition = ref(null) // { top, left } viewport coords, or null
+const textSelectionPosition = ref(null) // { top, left, above } viewport coords, or null
+
+/**
+ * Detect whether the user is selecting text backward (bottom-to-top / right-to-left).
+ */
+function isSelectionBackward(selection) {
+    if (!selection.anchorNode || !selection.focusNode) return false
+    if (selection.anchorNode === selection.focusNode) {
+        return selection.focusOffset < selection.anchorOffset
+    }
+    const position = selection.anchorNode.compareDocumentPosition(selection.focusNode)
+    return !!(position & Node.DOCUMENT_POSITION_PRECEDING)
+}
 
 /**
  * Compute the floating widget position from the current browser selection.
- * Returns { top, left } (viewport coords, anchored at bottom-center of selection)
- * or null if the selection is gone.
+ * Returns { top, left, above } (viewport coords) or null if the selection is gone.
+ * When the selection is backward and spans multiple lines, the widget is positioned
+ * above the selection (above=true); otherwise it appears below (above=false).
  */
 function getSelectionPosition() {
     try {
@@ -1304,7 +1317,9 @@ function getSelectionPosition() {
         const rect = range.getBoundingClientRect()
         // Rect can be zero-size if the selected nodes were unmounted (virtual scroller recycling)
         if (!rect.width && !rect.height) return null
-        return { top: rect.bottom, left: rect.left + rect.width / 2 }
+        // Show above only for backward selections spanning multiple lines
+        const above = isSelectionBackward(selection) && rect.height > 30
+        return { top: above ? rect.top : rect.bottom, left: rect.left + rect.width / 2, above }
     } catch {
         return null
     }

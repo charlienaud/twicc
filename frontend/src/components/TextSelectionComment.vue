@@ -11,7 +11,7 @@ import { useSettingsStore } from '../stores/settings'
 const props = defineProps({
     /** The text the user selected in the session view. */
     selectedText: { type: String, required: true },
-    /** Viewport-relative position: { top, left } — bottom-center of the selection. */
+    /** Viewport-relative position: { top, left, above } — anchored at selection edge. */
     position: { type: Object, required: true },
 })
 
@@ -36,10 +36,20 @@ const isDragging = ref(false)
 const panelOffset = ref({ dx: 0, dy: 0 })
 
 const rootStyle = computed(() => {
-    const base = { top: props.position.top + 'px', left: props.position.left + 'px' }
+    const base = { left: props.position.left + 'px' }
+    const above = props.position.above
+    if (above) {
+        // Anchor from bottom: place widget's bottom edge 4px above position.top
+        const vh = window.visualViewport?.height ?? window.innerHeight
+        base.bottom = (vh - props.position.top + 4) + 'px'
+    } else {
+        base.top = (props.position.top + 4) + 'px'
+    }
     if (expanded.value) {
         const { dx, dy } = panelOffset.value
-        base.transform = `translate(calc(-50% + ${dx}px), calc(4px + ${dy}px))`
+        base.transform = `translate(calc(-50% + ${dx}px), ${dy}px)`
+    } else {
+        base.transform = 'translateX(-50%)'
     }
     return base
 })
@@ -239,9 +249,7 @@ defineExpose({ isExpanded: expanded })
 .text-selection-comment {
     position: fixed;
     z-index: 10000;
-    /* Anchor: bottom-center of the selection.
-       Both button and panel appear below the selection. */
-    transform: translate(-50%, 4px);
+    /* transform is set dynamically in rootStyle based on selection direction */
 }
 
 /* ── Panel ───────────────────────────────────────────────────────── */
