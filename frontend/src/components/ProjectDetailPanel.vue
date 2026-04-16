@@ -2,7 +2,7 @@
 // ProjectDetailPanel.vue - Detail panel shown when no session is selected.
 // Delegates header display to ProjectDetailHeader, then shows tabbed content.
 
-import { ref, computed, watch, watchEffect, onActivated, onDeactivated } from 'vue'
+import { ref, computed, watch, watchEffect, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ALL_PROJECTS_ID, useDataStore } from '../stores/data'
 import { useWorkspacesStore } from '../stores/workspaces'
@@ -261,6 +261,72 @@ function onTabShow(event) {
     // Only handle events from our own tabs (not from nested tab-groups like TerminalPanel's)
     if (panel && TABS.value.some(t => t.id === panel)) switchToTab(panel)
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Keyboard shortcuts: tab navigation (Alt+Shift+1-4, ←/→, ↑)
+// Events dispatched by App.vue, handled here by the active instance only.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Ordered list of all visible tabs (for sequential ←/→ navigation).
+const orderedTabs = computed(() => TABS.value.map(t => t.id))
+
+// Tab visit history for Alt+Shift+↑ (last-visited, Alt+Tab-like behavior).
+const tabHistory = []
+const MAX_TAB_HISTORY = 50
+
+function pushTabHistory(tabId) {
+    if (tabHistory.length > 0 && tabHistory[tabHistory.length - 1] === tabId) return
+    tabHistory.push(tabId)
+    if (tabHistory.length > MAX_TAB_HISTORY) tabHistory.shift()
+}
+
+watch(activeTab, (newTabId, oldTabId) => {
+    if (!isActive.value) return
+    if (oldTabId) pushTabHistory(oldTabId)
+})
+
+// Direct tab mapping: Alt+Shift+{1,2,3,4} → fixed tabs (matches session pattern)
+const DIRECT_TAB_MAP = { 1: 'stats', 2: 'files', 3: 'git', 4: 'terminal' }
+
+function handleTabShortcut(event) {
+    if (!isActive.value) return
+
+    const { type, index } = event.detail
+    let targetTab = null
+
+    if (type === 'direct') {
+        targetTab = DIRECT_TAB_MAP[index]
+        if (!targetTab) return
+        if (targetTab === 'git' && !hasGitRepo.value) return
+    } else if (type === 'prev' || type === 'next') {
+        const tabs = orderedTabs.value
+        const currentIndex = tabs.indexOf(activeTab.value)
+        if (currentIndex === -1) return
+        const newIndex = type === 'next'
+            ? (currentIndex + 1) % tabs.length
+            : (currentIndex - 1 + tabs.length) % tabs.length
+        targetTab = tabs[newIndex]
+    } else if (type === 'last-visited') {
+        const tabs = orderedTabs.value
+        for (let i = tabHistory.length - 1; i >= 0; i--) {
+            const tabId = tabHistory[i]
+            if (tabId !== activeTab.value && tabs.includes(tabId)) {
+                targetTab = tabId
+                break
+            }
+        }
+    }
+
+    if (!targetTab) return
+    switchToTab(targetTab)
+}
+
+onMounted(() => {
+    window.addEventListener('twicc:tab-shortcut', handleTabShortcut)
+})
+onBeforeUnmount(() => {
+    window.removeEventListener('twicc:tab-shortcut', handleTabShortcut)
+})
 </script>
 
 <template>

@@ -73,9 +73,16 @@ const SESSION_ROUTES = new Set([
     'projects-session', 'projects-session-subagent', 'projects-session-files', 'projects-session-git', 'projects-session-terminal',
 ])
 
+// Project detail route names (for tab keyboard shortcuts: Alt+Shift+{1-4, ←, →, ↑})
+const PROJECT_DETAIL_ROUTES = new Set([
+    'project', 'project-files', 'project-git', 'project-terminal',
+    'projects-all', 'projects-files', 'projects-git', 'projects-terminal',
+])
+
 // Terminal route names (for terminal tab shortcuts: Alt+Ctrl+Shift+{1-9, ←, →, ↑})
 const TERMINAL_ROUTES = new Set([
     'session-terminal', 'projects-session-terminal',
+    'project-terminal', 'projects-terminal',
 ])
 
 function handleGlobalKeydown(e) {
@@ -123,9 +130,9 @@ function handleGlobalKeydown(e) {
             window.dispatchEvent(new CustomEvent('twicc:terminal-tab-shortcut', { detail: tabAction }))
         }
     }
-    // Alt+Shift+{1-4, ←, →, ↑, ↓}: tab navigation within a session.
-    // Dispatches a custom event handled by the active SessionView instance.
-    if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && SESSION_ROUTES.has(route.name)) {
+    // Alt+Shift+{1-4, ←, →, ↑, ↓}: tab navigation within a session or project detail panel.
+    // Dispatches a custom event handled by the active SessionView or ProjectDetailPanel instance.
+    if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && (SESSION_ROUTES.has(route.name) || PROJECT_DETAIL_ROUTES.has(route.name))) {
         let tabAction = null
         // Use e.code (physical key) for digits — e.key depends on keyboard layout
         // and modifiers (e.g. French AZERTY: Alt+Shift+number row produces unexpected e.key values).
