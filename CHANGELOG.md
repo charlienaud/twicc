@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Some entries include illustrative screenshots in nested sub-lists.
 
+## [Unreleased]
+
+### Added
+
+- Project, workspace, and all-projects home views now have their own Files, Git (projects only), and Terminal tabs
+- Pan/zoom on all image displays
+- Right-click context menu in file browser for file operations (Files tab) and git operations (Git tab)
+- New default theme (simpler), with a choice of 3 visual themes (customizable accent color); "Theme" (dark/light) setting renamed to "Color scheme"
+
+### Changed
+
+- Text selection comment panel is now draggable via the quote handle
+- Snippet buttons show a scope indicator
+- Re-clicking the active project/workspace in the sidebar deselects the current session and navigates to the home view (to access the new tabs)
+- Bump `claude-agent-sdk` from 0.1.58 to 0.1.59 (bundled Claude Code CLI: 2.1.97 → 2.1.105)
+
+### Fixed
+
+- Text selection comments now detected on mobile
+- Text selection comment panel repositions when the mobile keyboard opens
+- Process indicator aggregation (workspaces and projects) fixed: priority corrected and missing indicators restored in sidebar
+- Edit/Write diffs auto-close when the tool result is an error
+- Some sessions were incorrectly marked as read
+- Session titles were sometimes lost after renaming
+- Image diffs in git now show side-by-side comparison instead of "binary file cannot be diffed"
+- File path header shown in desktop layout when viewing files
+- Edit toggle hidden for non-writable files
+
 ## [1.4.0] - 2026-04-11
 
 ### Added
@@ -19,7 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- Bump `claude-agent-sdk` from 0.1.56 to 0.1.59 (bundled Claude Code CLI: 2.1.92 → 2.1.105)
+- Bump `claude-agent-sdk` from 0.1.56 to 0.1.58 (bundled Claude Code CLI: 2.1.92 → 2.1.97)
 - Improve windowed burn rates in usage tooltips and graphs: remove misleading smoothed rate, add cross-period calculation for early-window accuracy, rename to "Burn rate (last X)", and add 6h/12h range options to the graph
 - Add permanent install instructions (`uv tool install twicc`) to the README alongside the existing `uvx` quick start
   - ![Permanent install instructions in README](frontend/public/whats-new/v1.4/permanent-install.webp)
