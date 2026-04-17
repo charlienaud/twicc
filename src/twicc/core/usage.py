@@ -2,22 +2,24 @@
 Usage quota fetching and storage for Claude Code.
 
 Fetches usage data from the Anthropic OAuth usage API endpoint
-using credentials from ~/.claude/.credentials.json, and stores
-snapshots in the database.
+using credentials from the system keychain (macOS) or
+~/.claude/.credentials.json (Linux), and stores snapshots in the database.
 
 Also provides cost estimation for quota periods by summing
 SessionItem costs within the relevant time windows.
 """
 
 import asyncio
-import json
+import getpass
 import logging
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
 import httpx
+import orjson
 
 from twicc.core.models import SessionItem, UsageSnapshot
 
@@ -44,19 +46,81 @@ _failed_refresh_expires: set[int] = set()
 _TOKEN_REFRESH_TIMEOUT = 30
 
 
+KEYCHAIN_SERVICE = "Claude Code-credentials"
+
+
+def _read_credentials_data() -> dict | None:
+    """
+    Read the full credentials dict from the appropriate storage.
+
+    On macOS: tries the system Keychain first (via the ``keyring`` library),
+    then falls back to the JSON file.
+    On other platforms: reads the JSON file directly.
+
+    Returns the parsed dict, or None if credentials cannot be read.
+    """
+    if sys.platform == "darwin":
+        data = _read_credentials_from_keychain()
+        if data is not None:
+            return data
+
+    return _read_credentials_from_file()
+
+
+def _read_credentials_from_keychain() -> dict | None:
+    """Read credentials from the macOS Keychain via the ``keyring`` library."""
+    try:
+        import keyring
+    except ImportError:
+        logger.debug("keyring library not available, skipping Keychain lookup")
+        return None
+
+    try:
+        account = os.environ.get("USER") or getpass.getuser()
+    except Exception:
+        logger.debug("Cannot determine user account for Keychain lookup")
+        return None
+
+    try:
+        raw = keyring.get_password(KEYCHAIN_SERVICE, account)
+    except Exception as e:
+        logger.debug("Keychain read failed: %s", e)
+        return None
+
+    if not raw:
+        return None
+
+    try:
+        data = orjson.loads(raw)
+    except (orjson.JSONDecodeError, ValueError) as e:
+        logger.warning("Failed to parse Keychain credentials JSON: %s", e)
+        return None
+
+    return data if isinstance(data, dict) else None
+
+
+def _read_credentials_from_file() -> dict | None:
+    """Read credentials from ~/.claude/.credentials.json."""
+    if not CREDENTIALS_PATH.is_file():
+        return None
+
+    try:
+        data = orjson.loads(CREDENTIALS_PATH.read_bytes())
+    except (orjson.JSONDecodeError, OSError):
+        return None
+
+    return data if isinstance(data, dict) else None
+
+
 def has_oauth_credentials() -> bool:
     """
     Check whether OAuth credentials are configured.
 
-    Returns True if the credentials file exists and contains a
-    claudeAiOauth entry (regardless of whether the token is valid).
+    Returns True if the credentials can be read (from Keychain or file)
+    and contain a claudeAiOauth entry (regardless of whether the token is valid).
     """
-    if not CREDENTIALS_PATH.is_file():
-        return False
-
-    try:
-        data = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    data = _read_credentials_data()
+    if data is None:
         return False
 
     return bool(data.get("claudeAiOauth"))
@@ -64,25 +128,20 @@ def has_oauth_credentials() -> bool:
 
 def _get_credentials() -> tuple[str, int] | None:
     """
-    Read the OAuth access token and expiresAt from ~/.claude/.credentials.json.
+    Read the OAuth access token and expiresAt from credentials storage.
 
     Returns:
         A (token, expires_at_ms) tuple, or None if not found.
     """
-    if not CREDENTIALS_PATH.is_file():
-        logger.warning("Credentials file not found: %s", CREDENTIALS_PATH)
-        return None
-
-    try:
-        data = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Failed to read credentials file: %s", e)
+    data = _read_credentials_data()
+    if data is None:
+        logger.warning("No credentials found (checked %s)", "Keychain + file" if sys.platform == "darwin" else "file")
         return None
 
     oauth = data.get("claudeAiOauth", {})
     token = oauth.get("accessToken")
     if not token:
-        logger.warning("No OAuth access token found in credentials file")
+        logger.warning("No OAuth access token found in credentials")
         return None
 
     expires_at = oauth.get("expiresAt", 0)
@@ -91,19 +150,18 @@ def _get_credentials() -> tuple[str, int] | None:
 
 def _get_expires_at() -> int:
     """Read the current expiresAt value from credentials. Returns 0 if unavailable."""
-    try:
-        data = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
-        return data.get("claudeAiOauth", {}).get("expiresAt", 0)
-    except (json.JSONDecodeError, OSError):
+    data = _read_credentials_data()
+    if data is None:
         return 0
+    return data.get("claudeAiOauth", {}).get("expiresAt", 0)
 
 
 def _refresh_token_via_sdk(expires_at: int) -> bool:
     """
     Attempt to refresh the OAuth token by making a throwaway SDK call.
 
-    The SDK automatically refreshes the token in ~/.claude/.credentials.json
-    when it connects. We send a trivial prompt and discard the response.
+    The SDK automatically refreshes the stored credentials when it connects.
+    We send a trivial prompt and discard the response.
 
     Returns True if the token was refreshed (expiresAt changed), False otherwise.
     """
@@ -293,8 +351,8 @@ def read_usage_from_file(file_path: str) -> dict | None:
         return None
 
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
+        return orjson.loads(path.read_bytes())
+    except orjson.JSONDecodeError as e:
         logger.warning("Usage JSON file is not valid JSON: %s — %s", file_path, e)
         return None
     except OSError as e:
@@ -321,13 +379,13 @@ def validate_usage_file(file_path: str) -> tuple[bool, str]:
         return False, "File not found"
 
     try:
-        content = path.read_text(encoding="utf-8")
+        content = path.read_bytes()
     except OSError as e:
         return False, f"Cannot read file: {e}"
 
     try:
-        data = json.loads(content)
-    except json.JSONDecodeError as e:
+        data = orjson.loads(content)
+    except orjson.JSONDecodeError as e:
         return False, f"Invalid JSON: {e}"
 
     if not isinstance(data, dict):
@@ -349,7 +407,7 @@ def dump_usage_to_file(raw: dict, file_path: str) -> None:
         file_path: Absolute path to write to.
     """
     try:
-        Path(file_path).write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        Path(file_path).write_bytes(orjson.dumps(raw, option=orjson.OPT_INDENT_2))
     except OSError as e:
         logger.warning("Failed to dump usage to file: %s — %s", file_path, e)
 
