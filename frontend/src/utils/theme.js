@@ -115,6 +115,7 @@ export function initTheme() {
     applyColorScheme()
     applyWaClasses()
     recomputeCachedColors()
+    document.documentElement.classList.remove('loading')
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         applyColorScheme()
         recomputeCachedColors()
