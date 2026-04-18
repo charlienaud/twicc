@@ -4,6 +4,7 @@ import { useDataStore } from '../stores/data'
 import JsonViewer from './JsonViewer.vue'
 import Message from './items/Message.vue'
 import ApiError from './items/ApiError.vue'
+import CompactSummary from './items/content/CompactSummary.vue'
 import CustomTitle from './items/CustomTitle.vue'
 import UnknownEntry from './items/UnknownEntry.vue'
 import AppTooltip from './AppTooltip.vue'
@@ -197,6 +198,12 @@ function toggleJsonView() {
             <ApiError
                 v-else-if="kind === 'api_error'"
                 :data="content"
+            />
+            <CompactSummary
+                v-else-if="kind === 'compact_summary'"
+                :content="content?.message?.content || ''"
+                :session-id="sessionId"
+                :detail-key="`compact:${lineNum}`"
             />
             <CustomTitle
                 v-else-if="entryType === 'custom-title'"

@@ -445,6 +445,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
     last_slug: str | None = None
     last_resolved_git_directory: str | None = None
     last_resolved_git_branch: str | None = None
+    found_compact_summary = False
     agent_tool_result_counts: dict[str, tuple[int, datetime | None]] = {}
     agent_stopped_list: list[dict] = []
     original_serialized: dict[int, dict] = {}
@@ -489,6 +490,10 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
         metadata = compute_item_metadata(parsed)
         item.display_level = metadata['display_level']
         item.kind = metadata['kind']
+
+        # Track compact summary for session.compacted flag
+        if item.kind == ItemKind.COMPACT_SUMMARY:
+            found_compact_summary = True
 
         # Extract timestamp
         item.timestamp = extract_item_timestamp(parsed)
@@ -690,6 +695,7 @@ def compute_session_metadata(session_id: str, result_queue) -> None:
             'git_branch': last_resolved_git_branch,
             'model': last_model,
             'slug': last_slug,
+            'compacted': found_compact_summary,
             'created_at': first_timestamp.isoformat() if first_timestamp else None,
             'last_started_at': last_started_at.isoformat() if last_started_at else None,
             'last_updated_at': datetime.fromtimestamp(session.mtime, tz=timezone.utc).isoformat() if session.mtime else (last_updated_at.isoformat() if last_updated_at else None),

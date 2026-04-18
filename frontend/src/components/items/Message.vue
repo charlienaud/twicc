@@ -79,7 +79,7 @@ const contentItems = computed(() => {
 
 <template>
     <WorkingAssistantMessage v-if="isStartingAssistantMessage" label="starting" process-state="starting" />
-    <WorkingAssistantMessage v-else-if="isWorkingAssistantMessage" :tool-use="data.toolUse || null" :tool-use-completed="data.toolUseCompleted || false" />
+    <WorkingAssistantMessage v-else-if="isWorkingAssistantMessage" :label="data.label || null" :tool-use="data.toolUse || null" :tool-use-completed="data.toolUseCompleted || false" />
     <ContentList
         v-else
         :items="contentItems"

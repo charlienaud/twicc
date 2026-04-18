@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - New default theme (simpler), with a choice of 3 visual themes (customizable accent color); "Theme" (dark/light) setting renamed to "Color scheme"
 - Right-click context menu in file browser for file operations (Files tab) and git operations (Git tab)
 - Pan/zoom on all image displays
+- "Compacting" status indicator during live sessions (and better rendering of compaction summaries)
 
 ### Changed
 

@@ -91,6 +91,8 @@ def serialize_session(session):
         "claude_in_chrome": session.claude_in_chrome,
         # Maximum context window size in tokens (200K or 1M)
         "context_max": session.context_max,
+        # Whether the session has been compacted at least once
+        "compacted": session.compacted,
     }
 
 

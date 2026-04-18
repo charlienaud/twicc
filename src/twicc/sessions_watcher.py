@@ -724,6 +724,9 @@ def sync_session_items(
     # Track subagents that naturally finished
     agent_stopped_updates: list[AgentStoppedUpdate] = []
 
+    # Track if a compact_summary item was found in this batch
+    found_compact_summary = False
+
     # For subagents: track if we need to create the link between the agent and the parent session tool use
     subagent_needs_link = (
         session.type == SessionType.SUBAGENT
@@ -783,6 +786,10 @@ def sync_session_items(
         item.timestamp = extract_item_timestamp(parsed)
         if first_timestamp is None and item.timestamp is not None:
             first_timestamp = item.timestamp
+
+        # Track compact summary for session.compacted flag
+        if item.kind == ItemKind.COMPACT_SUMMARY:
+            found_compact_summary = True
 
         # Track lifecycle timestamps
         if item.timestamp is not None:
@@ -1049,6 +1056,10 @@ def sync_session_items(
     if last_new_content_at is not None:
         session.last_new_content_at = last_new_content_at
 
+    # Mark session as compacted if a compact_summary item was found
+    if found_compact_summary and not session.compacted:
+        session.compacted = True
+
     # Recalculate activity counters for affected days (only items that contribute)
     affected_days = {
         item.timestamp.date()
@@ -1058,7 +1069,7 @@ def sync_session_items(
     if is_new_session and session.type == SessionType.SESSION and first_timestamp:
         affected_days.add(first_timestamp.date())
 
-    session.save(update_fields=["last_offset", "last_line", "mtime", "user_message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "git_directory", "git_branch", "model", "slug", "created_at", "last_started_at", "last_updated_at", "last_new_content_at"])
+    session.save(update_fields=["last_offset", "last_line", "mtime", "user_message_count", "context_usage", "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch", "git_directory", "git_branch", "model", "slug", "created_at", "last_started_at", "last_updated_at", "last_new_content_at", "compacted"])
 
     # Recalculate activities after session.save (needs created_at in DB for session_count)
     from twicc.core.models import PeriodicActivity

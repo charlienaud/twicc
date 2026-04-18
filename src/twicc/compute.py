@@ -1140,7 +1140,7 @@ def compute_item_display_level(parsed_json: dict, kind: ItemKind | None) -> int:
         CURRENT_COMPUTE_VERSION in settings.py to trigger recomputation.
     """
     # These kinds are always visible
-    if kind in (ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE, ItemKind.API_ERROR):
+    if kind in (ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE, ItemKind.API_ERROR, ItemKind.COMPACT_SUMMARY):
         return ItemDisplayLevel.ALWAYS
 
     # DEBUG_ONLY: SYSTEM kind (system messages, queue-operation, progress, XML commands)
@@ -1201,6 +1201,10 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
 
     # User messages
     if entry_type == 'user':
+
+        # Compact summary: user message with isCompactSummary flag (context compaction)
+        if parsed_json.get('isCompactSummary'):
+            return ItemKind.COMPACT_SUMMARY
 
         content = get_message_content(parsed_json)
         text = extract_text_from_content(content)

@@ -754,6 +754,14 @@ export function useWebSocket() {
                 notifyProcessStateChange(msg, previousProcessState, route)
                 break
             }
+            case 'process_label': {
+                // Transient label override for WorkingAssistantMessage (e.g. "compacting")
+                const ps = store.processStates[msg.session_id]
+                if (ps) {
+                    ps.label = msg.label || null
+                }
+                break
+            }
             case 'agent_link_created': {
                 // New agent link created — populate cache and create synthetic process state
                 const agentSessionId = msg.agent_session_id

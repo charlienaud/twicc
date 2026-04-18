@@ -331,6 +331,9 @@ class Session(models.Model):
     # NULL = use global default, explicit value = forced for this session
     context_max = models.PositiveIntegerField(null=True, default=None)
 
+    # Whether the session's context has been compacted at least once
+    compacted = models.BooleanField(default=False)
+
     class Meta:
         ordering = ["-mtime"]
         indexes = [

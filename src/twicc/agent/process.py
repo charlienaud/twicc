@@ -1029,6 +1029,18 @@ class ClaudeProcess:
         )
 
     @staticmethod
+    def _is_compacting_status(msg: object) -> bool:
+        """Check if a message signals that the CLI is compacting the conversation context.
+
+        The CLI emits: SystemMessage(subtype="status", data={..., "status": "compacting"})
+        """
+        return (
+            isinstance(msg, SystemMessage)
+            and msg.subtype == "status"
+            and msg.data.get("status") == "compacting"
+        )
+
+    @staticmethod
     def _is_settings_change_ack(msg: object) -> bool:
         """Check if a message is an ack from a settings control request (not real assistant activity)."""
         return ClaudeProcess._is_permission_mode_change_ack(msg) or ClaudeProcess._is_model_change_ack(msg)
@@ -1308,6 +1320,10 @@ class ClaudeProcess:
                     self._set_state(ProcessState.USER_TURN)
                     await self._notify_state_change()
 
+                elif self._is_compacting_status(msg):
+                    # CLI is compacting context — notify frontend to show "compacting" label
+                    await self._broadcast_process_label("compacting")
+
                 elif self.state != ProcessState.ASSISTANT_TURN:
                     # Enforce assistant state if another message came after the ResultMessage.
                     # Skip ack messages from control requests (set_permission_mode, set_model)
@@ -1481,6 +1497,18 @@ class ClaudeProcess:
         await channel_layer.group_send(
             "updates",
             {"type": "broadcast", "data": data},
+        )
+
+    async def _broadcast_process_label(self, label: str) -> None:
+        """Broadcast a transient label override for the process status display."""
+        channel_layer = get_channel_layer()
+        await channel_layer.group_send(
+            "updates",
+            {"type": "broadcast", "data": {
+                "type": "process_label",
+                "session_id": self.session_id,
+                "label": label,
+            }},
         )
 
     async def _notify_state_change(self) -> None:
