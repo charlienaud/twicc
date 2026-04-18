@@ -33,6 +33,10 @@ from twicc.startup_progress import broadcast_startup_progress
 
 logger = logging.getLogger(__name__)
 
+# How often to broadcast project_updated during background compute (every N sessions per project).
+# Lower = more responsive cost updates in the UI, higher = less frontend overhead.
+PROJECT_BROADCAST_INTERVAL = 5
+
 # Use "spawn" start method to avoid fork-safety issues.
 # The default "fork" method on Linux can deadlock when the parent process has
 # multiple threads (event loop, sync_to_async thread pool, etc.) because the
@@ -220,16 +224,24 @@ def start_compute_process(ctx: ComputeContext) -> None:
 
 
 async def _handle_compute_done(session_id: str) -> None:
-    """Handle completion of a session compute - broadcast updates."""
-    from twicc.core.models import Project, Session
-    from twicc.core.serializers import serialize_project, serialize_session
+    """Handle completion of a session compute - broadcast session_updated.
+
+    Only broadcasts for real sessions (not subagents) that have user messages.
+    Subagents don't appear in session lists but each broadcast would trigger
+    addSession in the frontend store, causing O(n²) getter re-evaluations.
+    Subagent data is fetched on-demand via API when the user opens a subagent tab.
+
+    project_updated broadcasts are handled separately by consume_compute_results
+    with throttling (every N sessions per project) to reduce frontend overhead.
+    """
+    from twicc.core.models import Session, SessionType
+    from twicc.core.serializers import serialize_session
 
     try:
         session = await sync_to_async(Session.objects.get)(id=session_id)
 
-        # Only broadcast sessions that have user messages — empty sessions
-        # should stay invisible to the frontend.
-        if session.user_message_count == 0:
+        # Only broadcast real sessions with user messages
+        if session.user_message_count == 0 or session.type != SessionType.SESSION:
             return
 
         channel_layer = get_channel_layer()
@@ -243,8 +255,19 @@ async def _handle_compute_done(session_id: str) -> None:
                 },
             },
         )
+    except Session.DoesNotExist:
+        logger.warning(f"Session {session_id} not found for broadcast")
+    except Exception as e:
+        logger.error(f"Error broadcasting updates for {session_id}: {e}")
 
-        if project := await sync_to_async(Project.objects.filter(id=session.project_id).first)():
+
+async def _broadcast_project_updated(project_id: str) -> None:
+    """Broadcast project_updated for a single project."""
+    from twicc.core.models import Project
+    from twicc.core.serializers import serialize_project
+
+    try:
+        if project := await sync_to_async(Project.objects.filter(id=project_id).first)():
             channel_layer = get_channel_layer()
             await channel_layer.group_send(
                 "updates",
@@ -256,10 +279,8 @@ async def _handle_compute_done(session_id: str) -> None:
                     },
                 },
             )
-    except Session.DoesNotExist:
-        logger.warning(f"Session {session_id} not found for broadcast")
     except Exception as e:
-        logger.error(f"Error broadcasting updates for {session_id}: {e}")
+        logger.error(f"Error broadcasting project_updated for {project_id}: {e}")
 
 
 @sync_to_async
@@ -311,6 +332,12 @@ async def consume_compute_results(
         # Progress broadcasting — only count real sessions (not subagents) for display
         completed_count = 0
 
+        # Throttle project_updated broadcasts: every N normal sessions (global counter),
+        # broadcast project_updated for ALL projects that changed since the last broadcast.
+        # Pending projects are flushed at the end.
+        sessions_since_project_broadcast = 0
+        pending_project_ids: set[str] = set()
+
         while not ctx.stop_event.is_set():
             # Collect available messages (non-blocking)
             try:
@@ -334,6 +361,11 @@ async def consume_compute_results(
                     await sync_to_async(apply_session_complete)(msg)
                     await _handle_compute_done(msg['session_id'])
 
+                    # Track project as having pending changes
+                    project_id = msg.get('project_id')
+                    if project_id:
+                        pending_project_ids.add(project_id)
+
                     # Broadcast progress only for real sessions (not subagents)
                     session_id = msg['session_id']
                     if display_session_ids is None or session_id in display_session_ids:
@@ -342,9 +374,16 @@ async def consume_compute_results(
                             "background_compute", completed_count, total_display
                         )
 
+                        # Every N normal sessions, broadcast project_updated for all pending projects
+                        sessions_since_project_broadcast += 1
+                        if sessions_since_project_broadcast >= PROJECT_BROADCAST_INTERVAL:
+                            for pid in pending_project_ids:
+                                await _broadcast_project_updated(pid)
+                            pending_project_ids.clear()
+                            sessions_since_project_broadcast = 0
+
                     # Accumulate affected days for batched activity recalculation
                     affected_days = msg.get('affected_days')
-                    project_id = msg.get('project_id')
                     if project_id and affected_days:
                         pending_activity_days[project_id].update(
                             date_cls.fromisoformat(d) for d in affected_days
@@ -378,6 +417,14 @@ async def consume_compute_results(
 
             # Yield to event loop between batches
             await asyncio.sleep(0)
+
+        # Flush remaining project_updated broadcasts
+        for pid in pending_project_ids:
+            try:
+                await _broadcast_project_updated(pid)
+            except Exception as e:
+                logger.error(f"Error in final project broadcast for {pid}: {e}")
+        pending_project_ids.clear()
 
         # Flush any remaining pending activity recalculations before shutdown
         if pending_activity_days:

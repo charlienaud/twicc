@@ -65,9 +65,17 @@ const baseSessions = computed(() => {
 // Filter out archived sessions unless showArchived is enabled
 // Always keep the currently selected session visible (even if archived)
 const allSessions = computed(() => {
+    // Pre-compute archived project IDs once (O(projects) ≈ 20) instead of calling
+    // store.getProject() per session (O(sessions) ≈ 4,674). Each getProject() call
+    // triggers reactive Proxy tracking, multiplied by thousands of sessions ×
+    // thousands of re-evaluations during background compute.
+    const archivedProjectIds = props.showArchivedProjects
+        ? null
+        : new Set(store.getProjects.filter(p => p.archived).map(p => p.id))
+
     const filtered = baseSessions.value.filter(s =>
         (props.showArchived || !s.archived || s.id === props.sessionId) &&
-        (props.showArchivedProjects || !store.getProject(s.project_id)?.archived)
+        (!archivedProjectIds || !archivedProjectIds.has(s.project_id))
     )
 
     // Ensure the currently selected session is always in the list, even if it

@@ -697,8 +697,10 @@ export function useWebSocket() {
                     if (hasOrphanedLocalTitle) {
                         store.renameSession(msg.session.project_id, msg.session.id, localTitle)
                     }
+
                 } else if (existingSession) {
                     store.updateSession(msg.session)
+
                 } else if (store.areProjectSessionsFetched(msg.session.project_id) ||
                     store.areAllProjectsSessionsFetched) {
                     // Session not yet in store but sessions for this project have been

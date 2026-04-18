@@ -239,20 +239,50 @@ export const useDataStore = defineStore('data', {
             const oldestMtime = projectState?.hasMoreSessions
                 ? projectState.oldestSessionMtime
                 : null
-            return Object.values(state.sessions)
+            // During startup, skip per-property reactive tracking on sessions.
+            // Object.keys() tracks ITERATE_KEY (add/remove triggers re-eval),
+            // then toRaw() avoids the ~23K track() calls per eval from filter/sort
+            // property accesses. Normal tracking resumes after startup.
+            const isStartup = Object.values(state.startupProgress).some(p => p && !p.completed)
+            let sessions, pStates
+            if (isStartup) {
+                Object.keys(state.sessions)
+                const raw = toRaw(state.sessions)
+                sessions = Object.values(raw)
+                pStates = toRaw(state.processStates)
+            } else {
+                sessions = Object.values(state.sessions)
+                pStates = state.processStates
+            }
+            return sessions
                 .filter(s => s.project_id === projectId && !s.parent_session_id)
                 .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
-                .sort(sessionSortComparator(state.processStates))
+                .sort(sessionSortComparator(pStates))
         },
         getAllSessions: (state) => {
             const allState = state.localState.projects[ALL_PROJECTS_ID]
             const oldestMtime = allState?.hasMoreSessions
                 ? allState.oldestSessionMtime
                 : null
-            return Object.values(state.sessions)
+            // During startup, skip per-property reactive tracking on sessions.
+            // Object.keys() tracks ITERATE_KEY (add/remove triggers re-eval),
+            // then toRaw() avoids the ~23K track() calls per eval from filter/sort
+            // property accesses. Normal tracking resumes after startup.
+            const isStartup = Object.values(state.startupProgress).some(p => p && !p.completed)
+            let sessions, pStates
+            if (isStartup) {
+                Object.keys(state.sessions)
+                const raw = toRaw(state.sessions)
+                sessions = Object.values(raw)
+                pStates = toRaw(state.processStates)
+            } else {
+                sessions = Object.values(state.sessions)
+                pStates = state.processStates
+            }
+            return sessions
                 .filter(s => !s.parent_session_id)
                 .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
-                .sort(sessionSortComparator(state.processStates))
+                .sort(sessionSortComparator(pStates))
         },
         getSession: (state) => (id) => state.sessions[id],
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],
@@ -279,6 +309,7 @@ export const useDataStore = defineStore('data', {
          * @returns {number} The number of unread sessions
          */
         getProjectUnreadCount: (state) => (projectId) => {
+            if (Object.values(state.startupProgress).some(p => p && !p.completed)) return 0
             let count = 0
             for (const session of Object.values(state.sessions)) {
                 if (session.project_id !== projectId) continue
@@ -311,6 +342,7 @@ export const useDataStore = defineStore('data', {
          * @returns {number} The number of unread sessions
          */
         getGlobalUnreadCount: (state) => {
+            if (Object.values(state.startupProgress).some(p => p && !p.completed)) return 0
             let count = 0
             for (const session of Object.values(state.sessions)) {
                 if (session.draft || session.archived || session.parent_session_id) continue

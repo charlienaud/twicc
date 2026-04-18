@@ -63,6 +63,10 @@ const processInfo = computed(() => {
 
 /** Number of sessions with unread content across all projects. */
 const unreadCount = computed(() => {
+    // Skip expensive iteration during background compute — unread counts are
+    // meaningless while metadata is being recomputed, and iterating all sessions
+    // on every addSession (thousands of times) causes O(n²) CPU usage.
+    if (dataStore.isStartupInProgress) return 0
     let count = 0
     for (const session of Object.values(dataStore.sessions)) {
         if (!projectIdSet.value.has(session.project_id)) continue
