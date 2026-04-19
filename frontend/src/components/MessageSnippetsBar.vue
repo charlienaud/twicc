@@ -12,9 +12,14 @@ defineProps({
         type: Array,
         default: () => [],
     },
+    /** Whether to show the message history button (hidden in draft mode). */
+    showHistoryButton: {
+        type: Boolean,
+        default: false,
+    },
 })
 
-const emit = defineEmits(['snippet-press', 'snippet-disabled-press', 'manage-snippets'])
+const emit = defineEmits(['snippet-press', 'snippet-disabled-press', 'manage-snippets', 'open-history'])
 
 const messageSnippetsStore = useMessageSnippetsStore()
 const dataStore = useDataStore()
@@ -53,6 +58,15 @@ function handleSnippetClick(snippet) {
 
 <template>
     <div v-if="snippets.length > 0 || messageSnippetsStore._initialized" class="message-snippets-bar">
+        <button
+            v-if="showHistoryButton"
+            class="snippet-btn history-btn"
+            title="Browse previous messages"
+            @click="emit('open-history')"
+        >
+            <wa-icon name="arrow-up"></wa-icon>
+        </button>
+        <wa-divider v-if="showHistoryButton" orientation="vertical" class="history-divider"></wa-divider>
         <template v-if="snippets.length > 0">
             <template v-for="(snippet, i) in snippets" :key="i">
                 <button
@@ -237,6 +251,17 @@ button {
     opacity: 0.4;
     padding: var(--wa-space-2xs) var(--wa-space-xs);
     align-self: center;
+}
+
+/* ── History button ───────────────────────────────────────────────── */
+.snippet-btn.history-btn {
+    padding: 0 var(--wa-space-2xs);
+}
+
+.history-divider {
+    align-self: stretch;
+    --spacing: var(--wa-space-2xs);
+    height: auto;
 }
 
 /* ── Manage button ────────────────────────────────────────────────── */

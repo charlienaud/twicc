@@ -75,6 +75,7 @@ const histCursorPosition = ref(null)   // cursor position right after the '!' ch
 const histMirroredLength = ref(0)      // length of filter text mirrored into textarea after '!' (bang mode only)
 const histTriggerMode = ref(null)      // 'bang' (! trigger) or 'pageup' (PageUp on first line)
 const histInsertPosition = ref(null)   // cursor position for insertion (pageup mode only)
+let histLastCloseTime = 0              // timestamp of last close (to prevent reopen on same click)
 
 // Extract the text from the optimistic user message (if any) to pass to the history picker
 const optimisticMessageText = computed(() => {
@@ -795,6 +796,7 @@ async function onHistoryMessageSelect(selectedText) {
  * PageUp mode: restores cursor to original position.
  */
 function onHistoryPickerClose() {
+    histLastCloseTime = Date.now()
     const mode = histTriggerMode.value
     const pos = histCursorPosition.value
     const mirrorLen = histMirroredLength.value
@@ -830,15 +832,18 @@ function onKeydown(event) {
         return
     }
 
-    // PageUp on the first line → open message history picker
+    // PageUp on first line, or ArrowUp at position 0 → open message history picker
     // Skip on draft sessions — no message history to show
-    if (!isDraft.value && event.key === 'PageUp' && !historyPickerRef.value?.isOpen) {
+    if (!isDraft.value && (event.key === 'PageUp' || event.key === 'ArrowUp') && !historyPickerRef.value?.isOpen) {
         const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
         if (inner) {
             const cursorPos = inner.selectionStart
-            const textBefore = inner.value.slice(0, cursorPos)
-            // Cursor is on the first line if there's no newline before it
-            if (!textBefore.includes('\n')) {
+            // ArrowUp requires cursor at the very start (position 0)
+            // PageUp requires cursor on the first line (no newline before cursor)
+            const shouldOpen = event.key === 'ArrowUp'
+                ? cursorPos === 0
+                : !inner.value.slice(0, cursorPos).includes('\n')
+            if (shouldOpen) {
                 event.preventDefault()
                 histTriggerMode.value = 'pageup'
                 histInsertPosition.value = cursorPos
@@ -848,6 +853,23 @@ function onKeydown(event) {
             }
         }
     }
+}
+
+/**
+ * Open the message history picker from the snippets bar button.
+ * Uses pageup mode with cursor at position 0 (insert at start of textarea).
+ */
+function openHistoryFromButton() {
+    // If the picker just closed (via click-outside from this same click), skip reopening
+    if (Date.now() - histLastCloseTime < 300) return
+    if (historyPickerRef.value?.isOpen) return
+    const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
+    const cursorPos = inner ? inner.selectionStart : 0
+    histTriggerMode.value = 'pageup'
+    histInsertPosition.value = cursorPos
+    histCursorPosition.value = null
+    histMirroredLength.value = 0
+    nextTick(() => historyPickerRef.value?.open())
 }
 
 /**
@@ -1285,9 +1307,11 @@ defineExpose({ insertTextAtCursor })
         <!-- Message snippets bar -->
         <MessageSnippetsBar
             :snippets="snippetsForProject"
+            :show-history-button="!isDraft"
             @snippet-press="handleSnippetPress"
             @snippet-disabled-press="handleSnippetDisabledPress"
             @manage-snippets="openMessageSnippetsDialog"
+            @open-history="openHistoryFromButton"
         />
 
         <!-- Message snippets dialog (teleported out of the flex container) -->
