@@ -271,6 +271,24 @@ const showOverlay = computed(() => {
 })
 
 /**
+ * Check if a file is writable without fetching its content.
+ * Used in diff mode where content comes from props....
+ */
+async function checkWritable(filePath) {
+    try {
+        let url = `${resolvedApiPrefix.value}/file-content/?path=${encodeURIComponent(filePath)}`
+        if (props.rootRestriction) url += `&root=${encodeURIComponent(props.rootRestriction)}`
+        const res = await apiFetch(url)
+        if (res.ok) {
+            const data = await res.json()
+            isWritable.value = !!data.writable
+        }
+    } catch {
+        // Silently ignore — isWritable stays false
+    }
+}
+
+/**
  * Fetch file content from the backend.
  *
  * @param {string} filePath - absolute path to fetch
@@ -353,6 +371,10 @@ watch(() => props.filePath, async (newPath) => {
     // In diff mode, content is passed via props — don't fetch.
     if (props.diffMode) {
         currentContent.value = props.modifiedContent ?? ''
+        // For editable diffs (index view), check if the file is writable
+        if (!props.diffReadOnly) {
+            checkWritable(newPath)
+        }
         return
     }
 
@@ -367,6 +389,14 @@ watch(() => props.modifiedContent, (newContent) => {
     if (!props.diffMode) return
     isEditing.value = false
     currentContent.value = newContent ?? ''
+})
+
+// In diff mode, when switching from read-only (commit) to editable (index)
+// for the same file, filePath doesn't change so the main watch won't fire.
+// Re-check writability when diffReadOnly transitions to false.
+watch(() => props.diffReadOnly, (readOnly) => {
+    if (!props.diffMode || readOnly || !props.filePath) return
+    checkWritable(props.filePath)
 })
 
 // --- Edit mode handlers ---
@@ -697,7 +727,7 @@ function goToNextDiff() {
                 v-if="diffMode && showEditor && !showMarkdownPreview && widthMeasured"
                 ref="diffEditorRef"
                 :original="originalContent ?? ''"
-                :modified="modifiedContent ?? ''"
+                :modified="currentContent"
                 :file-path="filePath"
                 :read-only="diffReadOnly || !isEditing"
                 :word-wrap="wordWrap"
