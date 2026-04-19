@@ -137,6 +137,11 @@ function buildCommentExtension() {
     const existingComments = codeCommentsStore.getCommentsForContext(ctx)
     return createCodeCommentsExtension({
         initialComments: existingComments.map(c => ({ lineNumber: c.lineNumber, content: c.content, lineText: c.lineText || '' })),
+        getContent: (lineNumber) => {
+            const comments = codeCommentsStore.getCommentsForContext(ctx)
+            const comment = comments.find(c => c.lineNumber === lineNumber)
+            return comment?.content ?? ''
+        },
         onAdd: (lineNumber, lineText) => {
             // In patch-only mode, translate doc line to real file line for display
             const displayLineNumber = lineMap ? (lineMap[lineNumber - 1] ?? null) : null

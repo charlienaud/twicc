@@ -114,6 +114,11 @@ function buildCommentExt(context) {
     const existingComments = codeCommentsStore.getCommentsForContext(context)
     return createCodeCommentsExtension({
         initialComments: existingComments.map(c => ({ lineNumber: c.lineNumber, content: c.content, lineText: c.lineText || '' })),
+        getContent: (lineNumber) => {
+            const comments = codeCommentsStore.getCommentsForContext(context)
+            const comment = comments.find(c => c.lineNumber === lineNumber)
+            return comment?.content ?? ''
+        },
         onAdd: (lineNumber, lineText) => codeCommentsStore.addComment(context, lineNumber, lineText),
         onUpdate: (lineNumber, content) => codeCommentsStore.updateComment(context, lineNumber, content),
         onRemove: (lineNumber) => codeCommentsStore.removeComment(context, lineNumber),

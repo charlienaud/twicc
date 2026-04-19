@@ -32,12 +32,21 @@ class CodeCommentWidget extends WidgetType {
     }
 
     toDOM(view) {
+        // Read content from the store via callback (fresh) instead of this.content
+        // (potentially stale). this.content is only updated when syncCommentsEffect
+        // fires, but the Vue watcher that dispatches it doesn't track content changes
+        // (only identity fields). Using getContent ensures correct content after
+        // scrolling a widget out of the viewport and back in.
+        const content = this.callbacks.getContent
+            ? this.callbacks.getContent(this.lineNumber)
+            : this.content
+
         const wrap = document.createElement('div')
         wrap.className = 'cm-code-comment-wrap'
 
         const textarea = document.createElement('textarea')
         textarea.className = 'cm-code-comment-textarea'
-        textarea.value = this.content
+        textarea.value = content
         textarea.rows = 3
         textarea.placeholder = 'Add a comment...'
 
@@ -170,7 +179,7 @@ class CodeCommentWidget extends WidgetType {
         updateBtnState()
 
         // Auto-focus only for newly added comments (empty content), not restored ones
-        if (!this.content) {
+        if (!content) {
             requestAnimationFrame(() => textarea.focus())
         }
 
@@ -486,6 +495,7 @@ const baseTheme = EditorView.baseTheme({
  *
  * @param {Object} options
  * @param {Array<{lineNumber: number, content: string, lineText: string}>} options.initialComments
+ * @param {(lineNumber: number) => string} [options.getContent] - Read current content from the store (avoids stale widget content after scroll)
  * @param {(lineNumber: number, lineText: string) => void} options.onAdd
  * @param {(lineNumber: number, content: string) => void} options.onUpdate
  * @param {(lineNumber: number) => void} options.onRemove
@@ -493,8 +503,8 @@ const baseTheme = EditorView.baseTheme({
  * @param {(() => void)|null} options.onAddAllToMessage
  * @returns {import('@codemirror/state').Extension[]}
  */
-export function createCodeCommentsExtension({ initialComments = [], onAdd, onUpdate, onRemove, onAddToMessage, onAddAllToMessage, getSessionCommentCount }) {
-    const callbacks = { onAdd, onUpdate, onRemove, onAddToMessage, onAddAllToMessage, getSessionCommentCount }
+export function createCodeCommentsExtension({ initialComments = [], getContent, onAdd, onUpdate, onRemove, onAddToMessage, onAddAllToMessage, getSessionCommentCount }) {
+    const callbacks = { getContent, onAdd, onUpdate, onRemove, onAddToMessage, onAddAllToMessage, getSessionCommentCount }
     const field = createField(callbacks, initialComments)
     const hoverPlugin = createHoverButtonPlugin(callbacks, field)
     return [field, hoverPlugin, baseTheme]
