@@ -8,15 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Real-time streaming of assistant text and thinking content during active sessions
 - Project, workspace, and all-projects home views now have their own Files, Git (projects only), and Terminal tabs
+  - ![Workspace tabs](frontend/public/whats-new/v1.5/workspace-tabs.webp)
+- Real-time streaming of assistant text and thinking content during active sessions (avoid waiting undefined time before a visual response)
 - Quotas/usage settings section with JSON file read and dump modes
+  - ![Usage settings](frontend/public/whats-new/v1.5/usage-settings.webp)
 - Text selection comments now also work in the terminal tab
+  - ![Terminal text selection button](frontend/public/whats-new/v1.5/terminal-code-comment1.webp)
+  - ![Terminal text selection dialog](frontend/public/whats-new/v1.5/terminal-code-comment2.webp)
 - New default theme (simpler), with a choice of 3 visual themes (customizable accent color); "Theme" (dark/light) setting renamed to "Color scheme"
+  - ![Theme picker](frontend/public/whats-new/v1.5/theme-settings1.webp)
+  - ![Accent color picker](frontend/public/whats-new/v1.5/theme-settings2.webp)
+  - ![Default theme, dark mode](frontend/public/whats-new/v1.5/theme-default-dark.webp)
+  - ![Shoelace theme, dark mode](frontend/public/whats-new/v1.5/theme-shoelace-dark.webp)
+  - ![Awesome theme, dark mode](frontend/public/whats-new/v1.5/theme-awesome-dark.webp)
+  - ![Default theme, light mode](frontend/public/whats-new/v1.5/theme-default-light.webp)
+  - ![Shoelace theme, light mode](frontend/public/whats-new/v1.5/theme-shoelace-light.webp)
+  - ![Awesome theme, light mode](frontend/public/whats-new/v1.5/theme-awesome-light.webp)
 - Right-click context menu in file browser for file operations (Files tab) and git operations (Git tab)
+  - ![Right click on files tab](frontend/public/whats-new/v1.5/files-right-click.webp)
+  - ![Right click on git tab](frontend/public/whats-new/v1.5/git-right-click.webp)
 - Pan/zoom on all image displays
 - "Compacting" status indicator during live sessions (and better rendering of compaction summaries)
+  - ![Compact summary](frontend/public/whats-new/v1.5/compact-rendering.webp)
 - Click the commit hash in the Git tab header to view commit details and easily copy the hash
+  - ![Commit details](frontend/public/whats-new/v1.5/commit-details.webp)
 
 ### Changed
 
@@ -27,6 +43,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Snippet buttons show a scope (workspace ou project) indicator
 - Re-clicking the active project/workspace in the sidebar deselects the current session and navigates to the home view (to access the new tabs)
 - On small-height screens, tabs can be switched directly from the compact header via a dropdown without expanding it first
+  - ![Compact header with dropdown](frontend/public/whats-new/v1.5/compact-header-tabs-dropdown.webp)
+- Image diffs in git now show side-by-side comparison instead of "binary file cannot be diffed"
+  - ![Git diff comparison](frontend/public/whats-new/v1.5/git-image-diff.webp)
 - Bump `claude-agent-sdk` from 0.1.58 to 0.1.59 (bundled Claude Code CLI: 2.1.97 → 2.1.105)
 
 ### Fixed
@@ -39,7 +58,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Edit/Write diffs auto-close when the tool result is an error
 - Some sessions were incorrectly marked as read
 - Session titles were sometimes lost after renaming
-- Image diffs in git now show side-by-side comparison instead of "binary file cannot be diffed"
 - File path header shown in desktop layout when viewing files
 - Edit toggle hidden for non-writable files
 

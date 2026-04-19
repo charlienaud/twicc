@@ -4,7 +4,7 @@
 
 A web UI to browse and interact with your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions. View projects, sessions, conversation history, costs, and run Claude agents — all from your browser.
 
-![TWICC screenshot](https://raw.githubusercontent.com/twidi/twicc/main/frontend/public/screenshots/main-2026-04-05.webp)
+![TWICC screenshot](https://raw.githubusercontent.com/twidi/twicc/main/frontend/public/screenshots/session-example.webp)
 
 [![Crafted with love](https://img.shields.io/badge/crafted_with-love-red?style=social&logo=githubsponsors&logoColor=red)](https://github.com/sponsors/twidi)
 [![PyPI version](https://img.shields.io/pypi/v/twicc?logo=pypi&logoColor=blue&style=social)](https://pypi.org/project/twicc/)
