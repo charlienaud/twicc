@@ -1190,7 +1190,7 @@ def compute_item_kind(parsed_json: dict) -> ItemKind | None:
         return ItemKind.CUSTOM_TITLE
 
     # System types: system (except api_error), queue-operation, progress, etc.
-    if entry_type in ('queue-operation', 'progress', 'summary', 'file-history-snapshot', 'last-prompt', 'attachment'):
+    if entry_type in ('queue-operation', 'progress', 'summary', 'file-history-snapshot', 'last-prompt', 'attachment', 'permission-mode'):
         return ItemKind.SYSTEM
 
     if entry_type == 'system':
