@@ -315,6 +315,100 @@ def _get_head_hash(git_directory: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Single commit detail
+# ---------------------------------------------------------------------------
+
+
+def get_commit_detail(git_directory: str, commit_hash: str) -> dict:
+    """Return detailed information for a single commit.
+
+    Uses ``git show --no-patch`` with a format that includes the body,
+    author info, and committer info.
+
+    Returns::
+
+        {
+            "hash": "abc1234",
+            "message": "feat: ...",
+            "body": "Optional multi-line body...",
+            "committerDate": "2026-01-05 09:00:00 +0200",
+            "authorDate": "2026-01-05 09:00:00 +0200",
+            "author": { "name": "...", "email": "..." },
+            "committer": { "name": "...", "email": "..." },
+        }
+
+    Raises:
+        GitError: If the git command fails.
+    """
+    # Body (%b) is last because it can span multiple lines.
+    # We use %x00 (NUL) as a sentinel after the fixed fields,
+    # so everything after the NUL is the body.
+    fmt = _FIELD_SEP.join(["%h", "%s", "%cd", "%ad", "%an", "%ae", "%cn", "%ce"]) + "%x00%b"
+
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", git_directory,
+                "show", "--no-patch", f"--pretty=format:{fmt}", "--date=iso",
+                commit_hash,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise GitError("Git show timed out")
+    except FileNotFoundError:
+        raise GitError("Git is not installed or not in PATH")
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise GitError(f"Git show failed: {stderr}" if stderr else "Git show failed")
+
+    stdout = result.stdout
+    # Split on NUL: fixed fields before, body after.
+    nul_pos = stdout.find("\0")
+    if nul_pos == -1:
+        raise GitError("Unexpected git show output format")
+
+    fixed_part = stdout[:nul_pos]
+    body_raw = stdout[nul_pos + 1:]
+
+    parts = fixed_part.split(_FIELD_SEP)
+    if len(parts) != 8:
+        raise GitError("Unexpected git show output format")
+
+    hash_, message, committer_date, author_date, author_name, author_email, committer_name, committer_email = parts
+
+    entry: dict = {
+        "hash": hash_,
+        "message": message,
+        "committerDate": committer_date.strip(),
+    }
+
+    if author_date.strip():
+        entry["authorDate"] = author_date.strip()
+
+    # Author info.
+    a_name = author_name.strip() or None
+    a_email = author_email.strip() or None
+    if a_name or a_email:
+        entry["author"] = {k: v for k, v in [("name", a_name), ("email", a_email)] if v}
+
+    # Committer info (always included, even if same as author — the frontend decides what to show).
+    c_name = committer_name.strip() or None
+    c_email = committer_email.strip() or None
+    if c_name or c_email:
+        entry["committer"] = {k: v for k, v in [("name", c_name), ("email", c_email)] if v}
+
+    body = body_raw.strip()
+    if body:
+        entry["body"] = body
+
+    return entry
+
+
+# ---------------------------------------------------------------------------
 # Index (working-tree) changed files
 # ---------------------------------------------------------------------------
 

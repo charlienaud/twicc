@@ -1322,6 +1322,25 @@ def git_index_files(request, project_id, session_id=None):
     return JsonResponse(result, safe=False)
 
 
+def git_commit_detail(request, project_id, commit_hash, session_id=None):
+    """GET /api/projects/<id>/[sessions/<session_id>/]git-commit-detail/<commit_hash>/
+
+    Returns detailed metadata for a single commit (hash, message, body,
+    author, committer, dates).
+    """
+    from twicc.git import GitError, get_commit_detail
+
+    requested_git_dir = request.GET.get("git_dir")
+    git_directory = _resolve_session_git_directory(project_id, session_id, requested_git_dir=requested_git_dir)
+
+    try:
+        result = get_commit_detail(git_directory, commit_hash)
+    except GitError as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+    return JsonResponse(result)
+
+
 def git_commit_files(request, project_id, commit_hash, session_id=None):
     """GET /api/projects/<id>/[sessions/<session_id>/]git-commit-files/<commit_hash>/
 

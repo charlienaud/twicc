@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Right-click context menu in file browser for file operations (Files tab) and git operations (Git tab)
 - Pan/zoom on all image displays
 - "Compacting" status indicator during live sessions (and better rendering of compaction summaries)
+- Click the commit hash in the Git tab header to view commit details and easily copy the hash
 
 ### Changed
 

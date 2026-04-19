@@ -368,6 +368,17 @@ watch(selectedCommit, async (commit) => {
 })
 
 // ---------------------------------------------------------------------------
+// Commit detail (for popover)
+// ---------------------------------------------------------------------------
+
+async function fetchCommitDetail(commitHash) {
+    const url = appendGitDir(`${apiPrefix.value}/git-commit-detail/${commitHash}/`)
+    const res = await apiFetch(url)
+    if (!res.ok) return null
+    return await res.json()
+}
+
+// ---------------------------------------------------------------------------
 // File tree panel integration
 // ---------------------------------------------------------------------------
 
@@ -1051,6 +1062,7 @@ onMounted(() => {
                 :stats="headerStats"
                 :stats-loading="commitFilesLoading"
                 :git-log-open="gitLogOpen"
+                :fetch-commit-detail="fetchCommitDetail"
                 @toggle-git-log="toggleGitLog"
             />
             <wa-divider></wa-divider>

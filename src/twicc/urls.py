@@ -53,6 +53,7 @@ urlpatterns = [
     # Project-level git endpoints (for draft sessions)
     path("api/projects/<str:project_id>/git-log/", views.git_log),
     path("api/projects/<str:project_id>/git-index-files/", views.git_index_files),
+    path("api/projects/<str:project_id>/git-commit-detail/<str:commit_hash>/", views.git_commit_detail),
     path("api/projects/<str:project_id>/git-commit-files/<str:commit_hash>/", views.git_commit_files),
     path("api/projects/<str:project_id>/git-index-file-diff/", views.git_index_file_diff),
     path("api/projects/<str:project_id>/git-commit-file-diff/<str:commit_hash>/", views.git_commit_file_diff),
@@ -62,6 +63,7 @@ urlpatterns = [
     # Git endpoints (session-level, no subagent support)
     path("api/projects/<str:project_id>/sessions/<str:session_id>/git-log/", views.git_log),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/git-index-files/", views.git_index_files),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/git-commit-detail/<str:commit_hash>/", views.git_commit_detail),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/git-commit-files/<str:commit_hash>/", views.git_commit_files),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/git-index-file-diff/", views.git_index_file_diff),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/git-commit-file-diff/<str:commit_hash>/", views.git_commit_file_diff),
