@@ -61,6 +61,7 @@ export const SETTINGS_SCHEMA = {
     usageDumpFilePath: null,
     // --- Not persisted - runtime state ---
     _devMode: false,
+    _uvxMode: false,
     _effectiveColorScheme: null,
     _isTouchDevice: false,
     _isMac: false,
@@ -229,6 +230,10 @@ export const useSettingsStore = defineStore('settings', {
          * Whether the backend is running in dev mode (source layout) vs installed package.
          */
         isDevMode: (state) => state._devMode,
+        /**
+         * Whether the app was launched via `uvx twicc` (ephemeral) vs installed package.
+         */
+        isUvxMode: (state) => state._uvxMode,
         /**
          * Effective color scheme: always returns 'light' or 'dark', never 'system'.
          */
@@ -674,8 +679,9 @@ export function classifyClaudeSettingsChanges(current, requested) {
  * @param {Object} currentSettings - Current synced settings from the backend
  * @param {Object} claudeSettingsCategories - Claude settings categories from the backend
  * @param {boolean} devMode - Whether the backend is running in dev mode
+ * @param {boolean} uvxMode - Whether the app was launched via uvx
  */
-export function applyDefaultSettings(defaultSettings, currentSettings, claudeSettingsCategories, devMode, version) {
+export function applyDefaultSettings(defaultSettings, currentSettings, claudeSettingsCategories, devMode, uvxMode, version) {
     if (defaultSettings && typeof defaultSettings === 'object') {
         Object.assign(SETTINGS_SCHEMA, defaultSettings)
     }
@@ -683,6 +689,7 @@ export function applyDefaultSettings(defaultSettings, currentSettings, claudeSet
         _claudeSettingsCategories = claudeSettingsCategories
     }
     SETTINGS_SCHEMA._devMode = !!devMode
+    SETTINGS_SCHEMA._uvxMode = !!uvxMode
     // Store current settings for applySyncedSettings() to use after store init
     _pendingSyncedSettings = currentSettings
     _pendingSettingsVersion = version

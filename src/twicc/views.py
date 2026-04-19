@@ -1978,6 +1978,7 @@ def bootstrap(request):
         "default_settings": SYNCED_SETTINGS_DEFAULTS,
         "claude_settings_categories": CLAUDE_SETTINGS_CATEGORIES,
         "dev_mode": settings.DEV_MODE,
+        "uvx_mode": settings.UVX_MODE,
         "workspaces": workspaces_data.get("workspaces", []),
         "terminal_config": read_terminal_config(),
         "message_snippets": read_message_snippets_config(),

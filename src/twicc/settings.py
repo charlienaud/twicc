@@ -10,6 +10,7 @@ PACKAGE_DIR = Path(__file__).resolve().parent  # src/twicc/
 
 APP_VERSION = get_version()
 DEV_MODE = PACKAGE_DIR.parent.name == "src"
+UVX_MODE = not DEV_MODE and "UV_RUN_RECURSION_DEPTH" in os.environ
 
 # Load .env from the data directory (~/.twicc/.env or $TWICC_DATA_DIR/.env)
 # Idempotent: no-op if already loaded by run.py
