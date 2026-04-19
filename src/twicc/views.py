@@ -108,7 +108,20 @@ def _create_project(request):
     if not os.path.isabs(resolved):
         return JsonResponse({"error": "Directory must be an absolute path"}, status=400)
     if not os.path.isdir(resolved):
-        return JsonResponse({"error": "Directory does not exist or is not a directory"}, status=400)
+        # If path exists but is not a directory (e.g. a file), reject outright
+        if os.path.exists(resolved):
+            return JsonResponse({"error": "Path exists but is not a directory"}, status=400)
+        # Directory doesn't exist: create it if requested, otherwise ask the user
+        if data.get("create_directory"):
+            try:
+                os.makedirs(resolved, exist_ok=True)
+            except OSError as e:
+                return JsonResponse({"error": f"Failed to create directory: {e}"}, status=400)
+        else:
+            return JsonResponse(
+                {"error": "Directory does not exist", "code": "directory_not_found"},
+                status=400,
+            )
 
     # 2. Generate project ID: all non-alphanumeric chars become dashes
     project_id = re.sub(r'[^a-zA-Z0-9]', '-', resolved)

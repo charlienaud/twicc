@@ -30,6 +30,7 @@ const localColor = ref('')
 const localArchived = ref(false)
 const isSaving = ref(false)
 const errorMessage = ref('')
+const directoryNotFound = ref(false)
 
 // Mode detection
 const isCreateMode = computed(() => !props.project)
@@ -94,6 +95,7 @@ function focusFirstInput() {
  */
 function open() {
     errorMessage.value = ''
+    directoryNotFound.value = false
     if (isCreateMode.value) {
         localDirectory.value = ''
         localName.value = ''
@@ -127,6 +129,14 @@ function onDirectoryInput(event) {
     localDirectory.value = event.target.value
 }
 
+// Reset the "directory not found" prompt when the path changes (manual input or picker)
+watch(localDirectory, () => {
+    if (directoryNotFound.value) {
+        directoryNotFound.value = false
+        errorMessage.value = ''
+    }
+})
+
 /**
  * Handle name input change.
  */
@@ -139,6 +149,63 @@ function onNameInput(event) {
  */
 function onColorChange(event) {
     localColor.value = event.target.value
+}
+
+/**
+ * Submit the create-project request, optionally asking the backend to create the directory.
+ */
+async function submitCreate({ createDirectory = false } = {}) {
+    const trimmedDirectory = localDirectory.value.trim()
+    const trimmedName = localName.value.trim()
+
+    isSaving.value = true
+    errorMessage.value = ''
+    if (!createDirectory) {
+        directoryNotFound.value = false
+    }
+
+    const body = {
+        directory: trimmedDirectory,
+        name: trimmedName || null,
+        color: localColor.value || null,
+    }
+    if (createDirectory) {
+        body.create_directory = true
+    }
+
+    let response
+    try {
+        response = await apiFetch('/api/projects/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        })
+    } catch (error) {
+        errorMessage.value = 'Network error. Please try again.'
+        directoryNotFound.value = false
+        isSaving.value = false
+        return
+    }
+
+    if (!response.ok) {
+        const data = await response.json()
+        if (data.code === 'directory_not_found') {
+            directoryNotFound.value = true
+            errorMessage.value = ''
+        } else {
+            directoryNotFound.value = false
+            errorMessage.value = data.error || 'Failed to create project'
+        }
+        isSaving.value = false
+        return
+    }
+
+    const createdProject = await response.json()
+    store.addProject(createdProject)
+    emit('saved', createdProject)
+    directoryNotFound.value = false
+    isSaving.value = false
+    close()
 }
 
 /**
@@ -171,38 +238,7 @@ async function handleSave() {
             return
         }
 
-        isSaving.value = true
-        errorMessage.value = ''
-
-        let response
-        try {
-            response = await apiFetch('/api/projects/', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    directory: trimmedDirectory,
-                    name: trimmedName || null,
-                    color: localColor.value || null,
-                }),
-            })
-        } catch (error) {
-            errorMessage.value = 'Network error. Please try again.'
-            isSaving.value = false
-            return
-        }
-
-        if (!response.ok) {
-            const data = await response.json()
-            errorMessage.value = data.error || 'Failed to create project'
-            isSaving.value = false
-            return
-        }
-
-        const createdProject = await response.json()
-        store.addProject(createdProject)
-        emit('saved', createdProject)
-        isSaving.value = false
-        close()
+        await submitCreate()
     } else {
         // --- Edit mode ---
         if (!props.project) return
@@ -314,6 +350,21 @@ defineExpose({
                 ></wa-color-picker>
             </div>
 
+            <!-- Directory not found: ask user to create it -->
+            <wa-callout v-if="directoryNotFound" variant="warning" size="small" class="directory-not-found-callout">
+                <div class="directory-not-found-content">
+                    <span>This directory does not exist. Do you want to create it?</span>
+                    <div class="directory-not-found-actions">
+                        <wa-button size="small" variant="brand" :disabled="isSaving" @click="submitCreate({ createDirectory: true })">
+                            Create directory
+                        </wa-button>
+                        <wa-button size="small" variant="neutral" appearance="outlined" @click="directoryNotFound = false">
+                            Cancel
+                        </wa-button>
+                    </div>
+                </div>
+            </wa-callout>
+
             <!-- Error message -->
             <wa-callout v-if="errorMessage" variant="danger" size="small">
                 {{ errorMessage }}
@@ -403,6 +454,17 @@ defineExpose({
 
 .clear-name-link:hover {
     text-decoration: underline;
+}
+
+.directory-not-found-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-s);
+}
+
+.directory-not-found-actions {
+    display: flex;
+    gap: var(--wa-space-xs);
 }
 
 .dialog-footer {
