@@ -82,6 +82,14 @@ const heatmapValues = computed(() => {
     })
 })
 
+// Custom max: 50% of peak value (instead of library default 80%).
+// This widens the top color bucket, giving more contrast to lower activity days.
+const heatmapMax = computed(() => {
+    const counts = heatmapValues.value.map(v => v.count)
+    const peak = Math.max(...counts, 0)
+    return Math.ceil(peak / 2) || 1
+})
+
 /**
  * Custom tooltip formatter.
  * Messages mode: "N messages on Jan 1, 2026"
@@ -117,6 +125,7 @@ function tooltipFormatter(item, unit) {
             :key="`${rangeColor.join(',')}-${isVertical}-${mode}`"
             :values="heatmapValues"
             :end-date="endDate"
+            :max="heatmapMax"
             :range-color="rangeColor"
             :round="2"
             :tooltip="true"
