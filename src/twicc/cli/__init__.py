@@ -155,6 +155,16 @@ def usage() -> None:
     usage_main()
 
 
+@app.command(
+    context_settings={"allow_extra_args": True, "allow_interspersed_args": False, "ignore_unknown_options": True, "help_option_names": []},
+)
+def claude(ctx: typer.Context) -> None:
+    """Run the Claude CLI bundled with claude-agent-sdk."""
+    from twicc.cli.claude import main as claude_main
+
+    claude_main(ctx.args)
+
+
 @app.command()
 def search(
     query: str = typer.Argument(help="Tantivy query string (e.g. 'websocket', 'body:websocket AND from_role:user')"),
