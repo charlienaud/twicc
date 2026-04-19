@@ -461,6 +461,12 @@ function notifyProcessStateChange(msg, previousState, route) {
                 type: 'warning',
                 title: 'Claude Code stopped: running for over 6 hours',
             })
+        } else if (msg.kill_reason === 'auth_required') {
+            toast.session(sessionId, {
+                type: 'error',
+                title: 'Authentication required',
+                errorMessage: `Claude CLI is not logged in. Please run "claude /login" in your terminal to authenticate, then try again. If you don't have Claude CLI installed, you can use "${settings.isUvxMode ? 'uvx twicc' : 'twicc'} claude /login" instead.`,
+            })
         }
     }
 }

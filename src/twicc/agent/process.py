@@ -1277,6 +1277,23 @@ class ClaudeProcess:
                     last_finished_block_index = None
                     last_finished_block_type = None
 
+                elif isinstance(msg, AssistantMessage) and msg.error == "authentication_failed":
+                    logger.error(
+                        "Authentication failed for session %s — Claude CLI is not logged in",
+                        self.session_id,
+                    )
+                    self._cancel_pending_request_future()
+                    pid = self.get_pid()
+                    self._set_state(ProcessState.DEAD)
+                    self.kill_reason = "auth_required"
+                    self.last_activity = time.time()
+                    self._first_turn_done_event.set()
+                    await self._notify_state_change()
+                    self._client = None
+                    if pid is not None:
+                        await self._kill_system_process(pid)
+                    return
+
                 if isinstance(msg, ResultMessage):
                     # Claude finished responding, ready for user input
                     if msg.is_error:

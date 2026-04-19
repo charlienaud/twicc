@@ -57,6 +57,7 @@ from twicc.initial_sync import scan_projects, scan_sessions, sync_all  # noqa: E
 from twicc.pricing_task import run_initial_price_sync, start_price_sync_task, stop_price_sync_task  # noqa: E402
 from twicc.sessions_watcher import start_watcher, stop_watcher  # noqa: E402
 from twicc.startup_progress import broadcast_startup_progress  # noqa: E402
+from twicc.core.usage import has_oauth_credentials  # noqa: E402
 from twicc.usage_task import start_usage_sync_task, stop_usage_sync_task
 from twicc.statuspage_task import start_statuspage_task, stop_statuspage_task  # noqa: E402
 from twicc.slash_commands_task import start_slash_commands_task, stop_slash_commands_task  # noqa: E402
@@ -354,6 +355,19 @@ def main():
     # Migrations auto
     call_command("migrate", verbosity=0)
     logger.info("Migrations applied")
+
+    # Check Claude CLI credentials before starting
+    if not has_oauth_credentials():
+        from django.conf import settings
+
+        twicc_cmd = "uvx twicc claude /login" if settings.UVX_MODE else "twicc claude /login"
+        logger.error(
+            "Claude CLI is not authenticated. "
+            "Please run 'claude /login' in your terminal to log in, then restart TwiCC. "
+            "If you don't have Claude CLI installed, you can use '%s' instead.",
+            twicc_cmd,
+        )
+        sys.exit(1)
 
     # Parse port
     port = os.environ.get("TWICC_PORT", "3500")
