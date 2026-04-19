@@ -840,26 +840,6 @@ function onTabShow(event) {
                                     @touchmove="onChartTouchMove"
                                     @touchend="onChartTouchEnd"
                                 >
-                                    <defs>
-                                        <template v-for="curve in fhCurves" :key="curve.key">
-                                            <linearGradient :id="curve.gradientId" x1="0" x2="0" y1="1" y2="0">
-                                                <stop offset="0%" :stop-color="colorVars(curve.colorPrefix).g1"></stop>
-                                                <stop offset="10%" :stop-color="colorVars(curve.colorPrefix).g2"></stop>
-                                                <stop offset="25%" :stop-color="colorVars(curve.colorPrefix).g3"></stop>
-                                                <stop offset="50%" :stop-color="colorVars(curve.colorPrefix).g4"></stop>
-                                            </linearGradient>
-                                            <mask :id="curve.maskId" x="0" y="0" :width="SVG_WIDTH" :height="GRAPH_HEIGHT">
-                                                <polyline
-                                                    :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
-                                                    :points="curve.points"
-                                                    fill="transparent"
-                                                    :stroke="colorVars(curve.colorPrefix).stroke"
-                                                    stroke-width="2"
-                                                ></polyline>
-                                            </mask>
-                                        </template>
-                                    </defs>
-
                                     <!-- 100% reference line -->
                                     <line
                                         :x1="0" :x2="SVG_WIDTH"
@@ -873,16 +853,16 @@ function onTabShow(event) {
                                     />
 
                                     <g :transform="`translate(0, ${PADDING_TOP})`">
-                                        <template v-for="curve in fhCurves" :key="curve.key">
-                                            <rect
-                                                v-if="curve.visible"
-                                                x="0"
-                                                y="-2"
-                                                :width="SVG_WIDTH"
-                                                :height="GRAPH_HEIGHT + 2"
-                                                :style="`stroke: none; fill: url(#${curve.gradientId}); mask: url(#${curve.maskId});`"
-                                            ></rect>
-                                        </template>
+                                        <polyline
+                                            v-for="curve in fhCurves"
+                                            :key="curve.key"
+                                            v-show="curve.visible"
+                                            :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
+                                            :points="curve.points"
+                                            fill="none"
+                                            :stroke="colorVars(curve.colorPrefix).stroke"
+                                            stroke-width="2"
+                                        ></polyline>
                                     </g>
 
                                     <!-- Vertical cursor line -->
@@ -966,26 +946,6 @@ function onTabShow(event) {
                                     @touchmove="onChartTouchMove"
                                     @touchend="onChartTouchEnd"
                                 >
-                                    <defs>
-                                        <template v-for="curve in sdCurves" :key="curve.key">
-                                            <linearGradient :id="curve.gradientId" x1="0" x2="0" y1="1" y2="0">
-                                                <stop offset="0%" :stop-color="colorVars(curve.colorPrefix).g1"></stop>
-                                                <stop offset="10%" :stop-color="colorVars(curve.colorPrefix).g2"></stop>
-                                                <stop offset="25%" :stop-color="colorVars(curve.colorPrefix).g3"></stop>
-                                                <stop offset="50%" :stop-color="colorVars(curve.colorPrefix).g4"></stop>
-                                            </linearGradient>
-                                            <mask :id="curve.maskId" x="0" y="0" :width="SVG_WIDTH" :height="GRAPH_HEIGHT">
-                                                <polyline
-                                                    :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
-                                                    :points="curve.points"
-                                                    fill="transparent"
-                                                    :stroke="colorVars(curve.colorPrefix).stroke"
-                                                    stroke-width="2"
-                                                ></polyline>
-                                            </mask>
-                                        </template>
-                                    </defs>
-
                                     <!-- 100% reference line -->
                                     <line
                                         :x1="0" :x2="SVG_WIDTH"
@@ -999,16 +959,16 @@ function onTabShow(event) {
                                     />
 
                                     <g :transform="`translate(0, ${PADDING_TOP})`">
-                                        <template v-for="curve in sdCurves" :key="curve.key">
-                                            <rect
-                                                v-if="curve.visible"
-                                                x="0"
-                                                y="-2"
-                                                :width="SVG_WIDTH"
-                                                :height="GRAPH_HEIGHT + 2"
-                                                :style="`stroke: none; fill: url(#${curve.gradientId}); mask: url(#${curve.maskId});`"
-                                            ></rect>
-                                        </template>
+                                        <polyline
+                                            v-for="curve in sdCurves"
+                                            :key="curve.key"
+                                            v-show="curve.visible"
+                                            :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
+                                            :points="curve.points"
+                                            fill="none"
+                                            :stroke="colorVars(curve.colorPrefix).stroke"
+                                            stroke-width="2"
+                                        ></polyline>
                                     </g>
 
                                     <!-- Vertical cursor line -->

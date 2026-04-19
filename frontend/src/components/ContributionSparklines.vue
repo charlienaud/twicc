@@ -525,36 +525,16 @@ function formatAverage(value, isCost) {
                         @mousemove="onSvgMouseMove"
                         @mouseleave="onSvgMouseLeave"
                     >
-                        <defs>
-                            <template v-for="curve in combinedCurves" :key="curve.key">
-                                <linearGradient :id="curve.gradientId" x1="0" x2="0" y1="1" y2="0">
-                                    <stop offset="0%" :stop-color="colorVars(curve.colorPrefix).g1"></stop>
-                                    <stop offset="10%" :stop-color="colorVars(curve.colorPrefix).g2"></stop>
-                                    <stop offset="25%" :stop-color="colorVars(curve.colorPrefix).g3"></stop>
-                                    <stop offset="50%" :stop-color="colorVars(curve.colorPrefix).g4"></stop>
-                                </linearGradient>
-                                <mask :id="curve.maskId" x="0" y="0" :width="svgWidth" :height="GRAPH_HEIGHT">
-                                    <polyline
-                                        :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
-                                        :points="curve.points"
-                                        fill="transparent"
-                                        :stroke="colorVars(curve.colorPrefix).stroke"
-                                        stroke-width="2"
-                                    ></polyline>
-                                </mask>
-                            </template>
-                        </defs>
-
                         <g transform="translate(0, 2.0)">
-                            <rect
+                            <polyline
                                 v-for="curve in combinedCurves"
                                 :key="curve.key"
-                                x="0"
-                                y="-2"
-                                :width="svgWidth"
-                                :height="GRAPH_HEIGHT + 2"
-                                :style="`stroke: none; fill: url(#${curve.gradientId}); mask: url(#${curve.maskId});`"
-                            ></rect>
+                                :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
+                                :points="curve.points"
+                                fill="none"
+                                :stroke="colorVars(curve.colorPrefix).stroke"
+                                stroke-width="2"
+                            ></polyline>
                         </g>
 
                         <!-- Vertical cursor line at hovered point -->
@@ -613,32 +593,14 @@ function formatAverage(value, isCost) {
                         @mousemove="onSvgMouseMove"
                         @mouseleave="onSvgMouseLeave"
                     >
-                        <defs>
-                            <linearGradient :id="curve.gradientId" x1="0" x2="0" y1="1" y2="0">
-                                <stop offset="0%" :stop-color="colorVars(curve.colorPrefix).g1"></stop>
-                                <stop offset="10%" :stop-color="colorVars(curve.colorPrefix).g2"></stop>
-                                <stop offset="25%" :stop-color="colorVars(curve.colorPrefix).g3"></stop>
-                                <stop offset="50%" :stop-color="colorVars(curve.colorPrefix).g4"></stop>
-                            </linearGradient>
-                            <mask :id="curve.maskId" x="0" y="0" :width="svgWidth" :height="GRAPH_HEIGHT">
-                                <polyline
-                                    :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
-                                    :points="curve.points"
-                                    fill="transparent"
-                                    :stroke="colorVars(curve.colorPrefix).stroke"
-                                    stroke-width="2"
-                                ></polyline>
-                            </mask>
-                        </defs>
-
                         <g transform="translate(0, 2.0)">
-                            <rect
-                                x="0"
-                                y="-2"
-                                :width="svgWidth"
-                                :height="GRAPH_HEIGHT + 2"
-                                :style="`stroke: none; fill: url(#${curve.gradientId}); mask: url(#${curve.maskId});`"
-                            ></rect>
+                            <polyline
+                                :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
+                                :points="curve.points"
+                                fill="none"
+                                :stroke="colorVars(curve.colorPrefix).stroke"
+                                stroke-width="2"
+                            ></polyline>
                         </g>
 
                         <!-- Vertical cursor line at hovered point -->
