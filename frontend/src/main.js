@@ -47,6 +47,7 @@ import { createNotivue } from 'notivue'
 import { router } from './router'
 import App from './App.vue'
 import { applyDefaultSettings, initSettings, setModelRegistry } from './stores/settings'
+import { useAuthStore } from './stores/auth'
 import { useDataStore } from './stores/data'
 import { useCodeCommentsStore } from './stores/codeComments'
 import { useWorkspacesStore } from './stores/workspaces'
@@ -94,11 +95,19 @@ const notivue = createNotivue({
 })
 app.use(notivue)
 
-// Fetch bootstrap data from backend before initializing stores.
-// This single call returns settings, workspaces, terminal config, and message snippets
-// so the UI has everything it needs before mount (without waiting for the WebSocket).
-let bootstrapData
-{
+// Resolve authentication before fetching any protected data. /api/bootstrap/
+// is behind the password-auth middleware, so on a locked instance we must
+// send the user to /login first (the router guard handles that). Once the
+// user logs in, LoginView triggers a full page reload so this whole init
+// cycle re-runs with an authenticated session.
+const authStore = useAuthStore()
+await authStore.checkAuth()
+
+if (!authStore.needsLogin) {
+    // Fetch bootstrap data from backend before initializing stores.
+    // This single call returns settings, workspaces, terminal config, and message snippets
+    // so the UI has everything it needs before mount (without waiting for the WebSocket).
+    let bootstrapData
     let bootstrapFailed = false
     try {
         const resp = await fetch('/api/bootstrap/')
@@ -126,33 +135,33 @@ let bootstrapData
             </div>`
         throw new Error('Backend unreachable — cannot fetch bootstrap data')
     }
+
+    // Initialize settings (localStorage persistence, theme, font size, display mode watchers)
+    initSettings()
+
+    // Apply bootstrap data to stores so the UI has workspaces, snippets, and terminal config
+    // immediately available. The WebSocket will re-push these on (re)connect for live updates.
+    useWorkspacesStore().applyWorkspaces(bootstrapData.workspaces)
+    useTerminalConfigStore().applyConfig(bootstrapData.terminal_config)
+    useMessageSnippetsStore().applyConfig(bootstrapData.message_snippets)
+
+    // Hydrate drafts from IndexedDB (async, non-blocking)
+    // Order matters: sessions first so draft messages have their session available
+    const dataStore = useDataStore()
+    dataStore.hydrateDraftSessions().then(() => {
+        dataStore.hydrateDraftMessages()
+        dataStore.hydrateAttachments()
+    })
+
+    // Periodically clean up orphan draft sessions (every 2 hours).
+    // A draft becomes orphan when its session was created on the backend but the
+    // IndexedDB entry was never removed (e.g. tab closed mid-send, crash).
+    const DRAFT_CLEANUP_INTERVAL_MS = 2 * 60 * 60 * 1000
+    setInterval(() => dataStore.cleanupOrphanDraftSessions(), DRAFT_CLEANUP_INTERVAL_MS)
+
+    // Hydrate code comments from IndexedDB (async, non-blocking)
+    const codeCommentsStore = useCodeCommentsStore()
+    codeCommentsStore.hydrateComments()
 }
-
-// Initialize settings (localStorage persistence, theme, font size, display mode watchers)
-initSettings()
-
-// Apply bootstrap data to stores so the UI has workspaces, snippets, and terminal config
-// immediately available. The WebSocket will re-push these on (re)connect for live updates.
-useWorkspacesStore().applyWorkspaces(bootstrapData.workspaces)
-useTerminalConfigStore().applyConfig(bootstrapData.terminal_config)
-useMessageSnippetsStore().applyConfig(bootstrapData.message_snippets)
-
-// Hydrate drafts from IndexedDB (async, non-blocking)
-// Order matters: sessions first so draft messages have their session available
-const dataStore = useDataStore()
-dataStore.hydrateDraftSessions().then(() => {
-    dataStore.hydrateDraftMessages()
-    dataStore.hydrateAttachments()
-})
-
-// Periodically clean up orphan draft sessions (every 2 hours).
-// A draft becomes orphan when its session was created on the backend but the
-// IndexedDB entry was never removed (e.g. tab closed mid-send, crash).
-const DRAFT_CLEANUP_INTERVAL_MS = 2 * 60 * 60 * 1000
-setInterval(() => dataStore.cleanupOrphanDraftSessions(), DRAFT_CLEANUP_INTERVAL_MS)
-
-// Hydrate code comments from IndexedDB (async, non-blocking)
-const codeCommentsStore = useCodeCommentsStore()
-codeCommentsStore.hydrateComments()
 
 app.mount('#app')

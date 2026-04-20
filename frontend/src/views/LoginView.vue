@@ -12,10 +12,16 @@ const loading = ref(false)
 
 /**
  * Redirect to the originally requested page (from ?redirect=) or home.
+ *
+ * Uses a full page navigation instead of router.replace() so that main.js
+ * re-runs with an authenticated session — that's where bootstrap data
+ * (settings, workspaces, terminal config, snippets, model registry) is
+ * fetched and applied before the app mounts. Without this reload, the
+ * app would mount without that data and several stores would be empty.
  */
 function redirectAway() {
     const redirect = router.currentRoute.value.query.redirect || '/'
-    router.replace(redirect)
+    window.location.href = redirect
 }
 
 // Periodically re-check auth while on the login page.
