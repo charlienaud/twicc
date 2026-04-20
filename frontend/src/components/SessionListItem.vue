@@ -8,6 +8,7 @@
  * Now each is called once via a computed, and Vue caches the result.
  */
 import { ref, computed, watch, inject } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useCodeCommentsStore } from '../stores/codeComments'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
@@ -65,6 +66,8 @@ watch(() => props.session.id, () => {
     cancelDragHover()
 })
 
+const route = useRoute()
+const router = useRouter()
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 const codeCommentsStore = useCodeCommentsStore()
@@ -223,6 +226,28 @@ watch(canStop, (value) => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Link href for native "open in new tab" support
+// ═══════════════════════════════════════════════════════════════════════════
+
+const sessionHref = computed(() => {
+    const isAllProjects = route.name?.startsWith('projects-')
+    const location = isAllProjects
+        ? { name: 'projects-session', params: { projectId: props.session.project_id, sessionId: props.session.id } }
+        : { name: 'session', params: { projectId: route.params.projectId, sessionId: props.session.id } }
+    if (route.query.workspace) {
+        location.query = { workspace: route.query.workspace }
+    }
+    return router.resolve(location).href
+})
+
+function handleClick(event) {
+    // Let browser handle modifier-key clicks natively (open in new tab, etc.)
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return
+    event.preventDefault()
+    emit('select', props.session)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Actions
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -314,6 +339,7 @@ function handleStopConfirm({ mode }) {
     >
         <wa-button
             :id="`session-button-${session.id}`"
+            :href="sessionHref"
             :appearance="active ? 'outlined' : 'plain'"
             :variant="active ? 'brand' : 'neutral'"
             class="session-item"
@@ -321,7 +347,7 @@ function handleStopConfirm({ mode }) {
                 'session-item--active': active,
                 'session-item--highlighted': highlighted
             }"
-            @click="emit('select', session)"
+            @click="handleClick"
         >
             <div class="session-name-row">
                 <!-- Compact mode: inline project color dot (instead of full ProjectBadge line) -->
