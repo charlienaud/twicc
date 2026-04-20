@@ -33,9 +33,9 @@ const routes = [
         component: ProjectView,
         children: [
             { path: '', name: 'project', component: { render: () => null } },
-            { path: 'files', name: 'project-files', component: { render: () => null } },
-            { path: 'git', name: 'project-git', component: { render: () => null } },
-            { path: 'terminal', name: 'project-terminal', component: { render: () => null } },
+            { path: 'files/:rootKey?/:filePath?', name: 'project-files', component: { render: () => null } },
+            { path: 'git/:rootKey?/:commitRef?/:filePath?', name: 'project-git', component: { render: () => null } },
+            { path: 'terminal/:termIndex?', name: 'project-terminal', component: { render: () => null } },
             {
                 path: 'session/:sessionId',
                 name: 'session',
@@ -48,9 +48,9 @@ const routes = [
                         component: { render: () => null }
                     },
                     // Tool tabs - open as tabs within the session
-                    { path: 'files', name: 'session-files', component: { render: () => null } },
-                    { path: 'git', name: 'session-git', component: { render: () => null } },
-                    { path: 'terminal', name: 'session-terminal', component: { render: () => null } },
+                    { path: 'files/:rootKey?/:filePath?', name: 'session-files', component: { render: () => null } },
+                    { path: 'git/:rootKey?/:commitRef?/:filePath?', name: 'session-git', component: { render: () => null } },
+                    { path: 'terminal/:termIndex?', name: 'session-terminal', component: { render: () => null } },
                 ]
             }
         ]
@@ -61,9 +61,9 @@ const routes = [
         component: ProjectView,
         children: [
             { path: '', name: 'projects-all', component: { render: () => null } },
-            { path: 'files', name: 'projects-files', component: { render: () => null } },
-            { path: 'git', name: 'projects-git', component: { render: () => null } },
-            { path: 'terminal', name: 'projects-terminal', component: { render: () => null } },
+            { path: 'files/:rootKey?/:filePath?', name: 'projects-files', component: { render: () => null } },
+            { path: 'git/:rootKey?/:commitRef?/:filePath?', name: 'projects-git', component: { render: () => null } },
+            { path: 'terminal/:termIndex?', name: 'projects-terminal', component: { render: () => null } },
             {
                 path: ':projectId/session/:sessionId',
                 name: 'projects-session',
@@ -74,9 +74,9 @@ const routes = [
                         name: 'projects-session-subagent',
                         component: { render: () => null }
                     },
-                    { path: 'files', name: 'projects-session-files', component: { render: () => null } },
-                    { path: 'git', name: 'projects-session-git', component: { render: () => null } },
-                    { path: 'terminal', name: 'projects-session-terminal', component: { render: () => null } },
+                    { path: 'files/:rootKey?/:filePath?', name: 'projects-session-files', component: { render: () => null } },
+                    { path: 'git/:rootKey?/:commitRef?/:filePath?', name: 'projects-session-git', component: { render: () => null } },
+                    { path: 'terminal/:termIndex?', name: 'projects-session-terminal', component: { render: () => null } },
                 ]
             }
         ]

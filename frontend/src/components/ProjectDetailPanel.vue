@@ -14,6 +14,17 @@ import ContributionGraphs from './ContributionGraphs.vue'
 import FilesPanel from './FilesPanel.vue'
 import GitPanel from './GitPanel.vue'
 import TerminalPanel from './TerminalPanel.vue'
+import {
+    buildFilesRouteParams,
+    buildGitRouteParams,
+    clearTabRouteParams,
+    buildProjectBaseRouteName,
+    buildTabRouteName,
+    buildTerminalRouteParams,
+    decodePath,
+    parseRouteString,
+    parseRouteTermIndex,
+} from '../utils/granularRoutes'
 
 const props = defineProps({
     /** Project ID or ALL_PROJECTS_ID for aggregate view */
@@ -168,15 +179,18 @@ const filesAvailableRoots = computed(() => {
     // Single project mode
     const project = dataStore.getProject(props.projectId)
     if (!project?.directory) return []
-    const roots = [{ key: 'directory', label: 'Project directory', path: project.directory }]
+    const roots = [{ key: 'project', label: 'Project directory', path: project.directory }]
     if (project.git_root && project.git_root !== project.directory) {
-        roots.push({ key: 'git', label: 'Git root', path: project.git_root })
+        roots.push({ key: 'git-root', label: 'Git root', path: project.git_root })
     }
     return roots
 })
 
 // Tab management — derived from route (like SessionView)
 const headerRef = ref(null)
+const filesPanelRef = ref(null)
+const gitPanelRef = ref(null)
+const terminalPanelRef = ref(null)
 
 const isSingleProjectMode = computed(() => !isAllProjectsMode.value && !isWorkspaceMode.value)
 
@@ -205,45 +219,69 @@ const activeTab = computed(() => {
     if (name === 'project-terminal' || name === 'projects-terminal') return 'terminal'
     return 'stats'
 })
+const filesRouteRootKey = computed(() => parseRouteString(route.params.rootKey))
+const filesRouteFilePath = computed(() => {
+    const decoded = decodePath(parseRouteString(route.params.filePath))
+    return decoded === null ? null : decoded
+})
+const gitRouteRootKey = computed(() => parseRouteString(route.params.rootKey))
+const gitRouteCommitRef = computed(() => parseRouteString(route.params.commitRef))
+const gitRouteFilePath = computed(() => {
+    const decoded = decodePath(parseRouteString(route.params.filePath))
+    return decoded === null ? null : decoded
+})
+const terminalRouteTermIndex = computed(() => parseRouteTermIndex(route.params.termIndex))
 
 watch([activeTab, hasGitRepo], ([tabId, hasGit]) => {
     if (tabId === 'git' && !hasGit) {
         if (!isActive.value) return
         if (!dataStore.getProject(props.projectId)) return
         router.replace({
-            name: isAllProjectsMode.value ? 'projects-all' : 'project',
+            name: buildProjectBaseRouteName(isAllProjectsMode.value),
             params: isAllProjectsMode.value ? {} : { projectId: props.projectId },
             query: route.query,
         })
     }
 }, { immediate: true })
 
+function navigateInTab(tabId, params = {}, method = 'push') {
+    router[method]({
+        name: buildTabRouteName({
+            isAllProjectsMode: isAllProjectsMode.value,
+            isSessionRoute: false,
+            tab: tabId,
+        }),
+        params: clearTabRouteParams(tabId, isAllProjectsMode.value ? params : { projectId: props.projectId, ...params }),
+        query: route.query,
+    })
+}
+
+function onFilesNavigate({ rootKey, filePath, replace }) {
+    navigateInTab('files', buildFilesRouteParams({ rootKey, filePath }), replace ? 'replace' : 'push')
+}
+
+function onGitNavigate({ rootKey, commitRef, filePath, replace }) {
+    navigateInTab('git', buildGitRouteParams({ rootKey, commitRef, filePath }), replace ? 'replace' : 'push')
+}
+
+function onTerminalNavigate({ termIndex, replace }) {
+    navigateInTab('terminal', buildTerminalRouteParams({ termIndex }), replace ? 'replace' : 'push')
+}
+
 // Note: TABS already has { id, label, icon } — pass directly to header for the compact dropdown
 
 function switchToTab(tabId) {
     if (tabId === activeTab.value) return
     if (tabId === 'files') {
-        router.push({
-            name: isAllProjectsMode.value ? 'projects-files' : 'project-files',
-            params: isAllProjectsMode.value ? {} : { projectId: props.projectId },
-            query: route.query,
-        })
+        navigateInTab('files')
     } else if (tabId === 'git') {
-        router.push({
-            name: isAllProjectsMode.value ? 'projects-git' : 'project-git',
-            params: isAllProjectsMode.value ? {} : { projectId: props.projectId },
-            query: route.query,
-        })
+        navigateInTab('git')
     } else if (tabId === 'terminal') {
-        router.push({
-            name: isAllProjectsMode.value ? 'projects-terminal' : 'project-terminal',
-            params: isAllProjectsMode.value ? {} : { projectId: props.projectId },
-            query: route.query,
-        })
+        navigateInTab('terminal')
     } else {
         // Stats = default route (no suffix)
         router.push({
-            name: isAllProjectsMode.value ? 'projects-all' : 'project',
+            name: buildProjectBaseRouteName(isAllProjectsMode.value),
             params: isAllProjectsMode.value ? {} : { projectId: props.projectId },
             query: route.query,
         })
@@ -374,30 +412,42 @@ onBeforeUnmount(() => {
 
             <wa-tab-panel name="files">
                 <FilesPanel
+                    ref="filesPanelRef"
                     :api-prefix="filesApiPrefix"
                     :project-id="filesProjectId"
                     :root-restriction="filesRootRestriction"
                     :external-roots="filesAvailableRoots"
+                    :route-root-key="activeTab === 'files' ? filesRouteRootKey : undefined"
+                    :route-file-path="activeTab === 'files' ? filesRouteFilePath : undefined"
                     :active="isActive && activeTab === 'files'"
+                    @navigate="onFilesNavigate"
                 />
             </wa-tab-panel>
 
             <wa-tab-panel v-if="hasGitRepo" name="git">
                 <GitPanel
+                    ref="gitPanelRef"
                     :project-id="projectId"
                     :session-id="projectId"
                     :project-git-root="dataStore.getProject(projectId)?.git_root"
+                    :route-root-key="activeTab === 'git' ? gitRouteRootKey : undefined"
+                    :route-commit-ref="activeTab === 'git' ? gitRouteCommitRef : undefined"
+                    :route-file-path="activeTab === 'git' ? gitRouteFilePath : undefined"
                     :is-draft="true"
                     :active="isActive && activeTab === 'git'"
+                    @navigate="onGitNavigate"
                 />
             </wa-tab-panel>
 
             <wa-tab-panel name="terminal">
                 <TerminalPanel
+                    ref="terminalPanelRef"
                     :context-key="terminalContextKey"
                     :project-id="terminalProjectId"
                     :cwd="terminalCwd"
+                    :route-term-index="activeTab === 'terminal' ? terminalRouteTermIndex : undefined"
                     :active="isActive && activeTab === 'terminal'"
+                    @navigate="onTerminalNavigate"
                 />
             </wa-tab-panel>
         </wa-tab-group>

@@ -12,6 +12,7 @@ import { useSettingsStore, getModelRegistry } from '../stores/settings'
 import { useDataStore } from '../stores/data'
 import { useWorkspacesStore } from '../stores/workspaces'
 import { useRoute } from 'vue-router'
+import { clearTabRouteParams } from '../utils/granularRoutes'
 import {
     DISPLAY_MODE,
     COLOR_SCHEME,
@@ -176,7 +177,14 @@ export function initStaticCommands(router) {
             when: () => !!routeSessionId(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-session' : 'session'
-                router.push({ name, params: route.params })
+                router.push({
+                    name,
+                    params: clearTabRouteParams('files', {
+                        projectId: route.params.projectId,
+                        sessionId: route.params.sessionId,
+                    }),
+                    query: route.query,
+                })
             },
         },
         {
@@ -187,7 +195,14 @@ export function initStaticCommands(router) {
             when: () => !!routeSessionId(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-session-files' : 'session-files'
-                router.push({ name, params: route.params })
+                router.push({
+                    name,
+                    params: clearTabRouteParams('git', {
+                        projectId: route.params.projectId,
+                        sessionId: route.params.sessionId,
+                    }),
+                    query: route.query,
+                })
             },
         },
         {
@@ -206,7 +221,14 @@ export function initStaticCommands(router) {
             },
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-session-git' : 'session-git'
-                router.push({ name, params: route.params })
+                router.push({
+                    name,
+                    params: clearTabRouteParams('terminal', {
+                        projectId: route.params.projectId,
+                        sessionId: route.params.sessionId,
+                    }),
+                    query: route.query,
+                })
             },
         },
         {
@@ -217,7 +239,14 @@ export function initStaticCommands(router) {
             when: () => !!routeSessionId(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-session-terminal' : 'session-terminal'
-                router.push({ name, params: route.params })
+                router.push({
+                    name,
+                    params: {
+                        projectId: route.params.projectId,
+                        sessionId: route.params.sessionId,
+                    },
+                    query: route.query,
+                })
             },
         },
 
@@ -230,7 +259,11 @@ export function initStaticCommands(router) {
             when: () => isOnProjectDetail(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-all' : 'project'
-                router.push({ name, params: route.params, query: route.query })
+                router.push({
+                    name,
+                    params: clearTabRouteParams('files', isAllProjectsMode() ? {} : { projectId: route.params.projectId }),
+                    query: route.query,
+                })
             },
         },
         {
@@ -241,7 +274,11 @@ export function initStaticCommands(router) {
             when: () => isOnProjectDetail(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-files' : 'project-files'
-                router.push({ name, params: route.params, query: route.query })
+                router.push({
+                    name,
+                    params: clearTabRouteParams('git', isAllProjectsMode() ? {} : { projectId: route.params.projectId }),
+                    query: route.query,
+                })
             },
         },
         {
@@ -258,7 +295,11 @@ export function initStaticCommands(router) {
             },
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-git' : 'project-git'
-                router.push({ name, params: route.params, query: route.query })
+                router.push({
+                    name,
+                    params: clearTabRouteParams('terminal', isAllProjectsMode() ? {} : { projectId: route.params.projectId }),
+                    query: route.query,
+                })
             },
         },
         {
@@ -269,7 +310,11 @@ export function initStaticCommands(router) {
             when: () => isOnProjectDetail(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-terminal' : 'project-terminal'
-                router.push({ name, params: route.params, query: route.query })
+                router.push({
+                    name,
+                    params: isAllProjectsMode() ? {} : { projectId: route.params.projectId },
+                    query: route.query,
+                })
             },
         },
 

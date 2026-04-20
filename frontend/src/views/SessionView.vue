@@ -17,6 +17,18 @@ import AppTooltip from '../components/AppTooltip.vue'
 import ProcessIndicator from '../components/ProcessIndicator.vue'
 import CodeCommentsIndicator from '../components/CodeCommentsIndicator.vue'
 import { useCodeCommentsStore } from '../stores/codeComments'
+import {
+    buildFilesRouteParams,
+    buildGitRouteParams,
+    clearTabRouteParams,
+    buildSessionBaseRouteName,
+    buildSubagentRouteName,
+    buildTabRouteName,
+    buildTerminalRouteParams,
+    decodePath,
+    parseRouteString,
+    parseRouteTermIndex,
+} from '../utils/granularRoutes'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,39 +46,14 @@ const sessionItemsListRef = ref(null)
 // Reference to FilesPanel for cross-tab file reveal
 const filesPanelRef = ref(null)
 
+const gitPanelRef = ref(null)
+const terminalPanelRef = ref(null)
+
 // ═══════════════════════════════════════════════════════════════════════════
 // KeepAlive lifecycle: active state, listener setup/teardown
 // ═══════════════════════════════════════════════════════════════════════════
 
 const isActive = ref(true)
-
-/**
- * Restore the last active tab when returning to this session via KeepAlive.
- * The route always lands on /session/:id (= 'main'), but the user may have
- * been on a different tab. We use router.replace to silently correct the URL.
- */
-function restoreActiveTab() {
-    const saved = store.getSessionOpenTabs(sessionId.value)
-    const savedTab = saved?.activeTab
-    if (!savedTab || savedTab === 'main' || savedTab === activeTabId.value) return
-
-    const params = { projectId: projectId.value, sessionId: sessionId.value }
-
-    if (savedTab.startsWith('agent-')) {
-        const agentId = savedTab.replace('agent-', '')
-        router.replace({
-            name: isAllProjectsMode.value ? 'projects-session-subagent' : 'session-subagent',
-            params: { ...params, subagentId: agentId }
-        })
-    } else if (['files', 'git', 'terminal'].includes(savedTab)) {
-        // Don't restore git tab if session has no git repo
-        if (savedTab === 'git' && !hasGitRepo.value) return
-        router.replace({
-            name: isAllProjectsMode.value ? `projects-session-${savedTab}` : `session-${savedTab}`,
-            params
-        })
-    }
-}
 
 onMounted(() => {
     // Mark session as viewed on first render
@@ -87,11 +74,6 @@ onActivated(() => {
 
     // Register contextual session commands in the command palette
     registerSessionCommands()
-
-    // Restore last active tab from store (KeepAlive preserves component state,
-    // but the route is global — navigating to a session always lands on /session/:id
-    // which maps to 'main'. If the user was on a different tab, restore it.)
-    restoreActiveTab()
 
     // Mark session as viewed when re-activated (KeepAlive navigation back)
     notifySessionViewed(sessionId.value, 'activated')
@@ -117,21 +99,6 @@ onDeactivated(() => {
 
 provide('sessionActive', readonly(isActive))
 
-// ─── Cross-tab root directory sync (Files ↔ Git) ─────────────────────────────
-
-/**
- * Shared git directory path for synchronizing root selection between
- * the Files tab and the Git tab.
- * Updated when the user manually selects a git root in either panel.
- * Each panel watches this via prop and selects the matching root,
- * without re-emitting (preventing infinite loops).
- */
-const syncedGitDirPath = ref(null)
-
-function onRootChanged(path) {
-    syncedGitDirPath.value = path
-}
-
 // ─── Cross-tab file reveal (Git → Files) ─────────────────────────────────────
 
 /**
@@ -145,8 +112,6 @@ function onRootChanged(path) {
  * @param {string} absolutePath — the absolute filesystem path to reveal
  */
 async function viewFileInFilesTab(absolutePath, { lineNum = null } = {}) {
-    // Ensure the Files tab root can reach the file.
-    // Determine the root directory that contains this file path and switch to it.
     const gitDir = session.value?.git_directory
     const sessionCwd = session.value?.cwd
     const projectGitRoot = store.getProject(session.value?.project_id)?.git_root
@@ -154,11 +119,16 @@ async function viewFileInFilesTab(absolutePath, { lineNum = null } = {}) {
     const matchingRoot = [gitDir, sessionCwd, projectDir, projectGitRoot].find(
         root => root && absolutePath.startsWith(root + '/')
     )
-    if (matchingRoot) {
-        filesPanelRef.value?.setRootByPath(matchingRoot)
-    }
-    switchToTab('files')
-    // Wait for the tab panel to become active and the FilesPanel to be ready
+    let rootKey
+    if (matchingRoot === gitDir || matchingRoot === projectGitRoot) rootKey = 'git-root'
+    else if (matchingRoot === sessionCwd) rootKey = 'session'
+    else if (matchingRoot === projectDir) rootKey = 'project'
+
+    const relativePath = matchingRoot && absolutePath.startsWith(matchingRoot + '/')
+        ? absolutePath.slice(matchingRoot.length + 1)
+        : undefined
+
+    navigateInTab('files', buildFilesRouteParams({ rootKey, filePath: relativePath }))
     await nextTick()
     await filesPanelRef.value?.revealFile(absolutePath, { lineNum })
 }
@@ -183,6 +153,18 @@ const subagentId = computed(() => route.params.subagentId)
 
 // Detect "All Projects" mode from route name
 const isAllProjectsMode = computed(() => route.name?.startsWith('projects-'))
+const filesRouteRootKey = computed(() => parseRouteString(route.params.rootKey))
+const filesRouteFilePath = computed(() => {
+    const decoded = decodePath(parseRouteString(route.params.filePath))
+    return decoded === null ? null : decoded
+})
+const gitRouteRootKey = computed(() => parseRouteString(route.params.rootKey))
+const gitRouteCommitRef = computed(() => parseRouteString(route.params.commitRef))
+const gitRouteFilePath = computed(() => {
+    const decoded = decodePath(parseRouteString(route.params.filePath))
+    return decoded === null ? null : decoded
+})
+const terminalRouteTermIndex = computed(() => parseRouteTermIndex(route.params.termIndex))
 
 // Session data
 const session = computed(() => store.getSession(sessionId.value))
@@ -273,11 +255,40 @@ watch([activeTabId, hasGitRepo], ([tabId, hasGit]) => {
         if (route.params.sessionId !== sessionId.value) return
         if (!store.getProject(session.value?.project_id)) return
         router.replace({
-            name: isAllProjectsMode.value ? 'projects-session' : 'session',
-            params: { projectId: projectId.value, sessionId: sessionId.value }
+            name: buildSessionBaseRouteName(isAllProjectsMode.value),
+            params: { projectId: projectId.value, sessionId: sessionId.value },
+            query: route.query,
         })
     }
 }, { immediate: true })
+
+function navigateInTab(tab, params = {}, method = 'push') {
+    router[method]({
+        name: buildTabRouteName({
+            isAllProjectsMode: isAllProjectsMode.value,
+            isSessionRoute: true,
+            tab,
+        }),
+        params: clearTabRouteParams(tab, {
+            projectId: projectId.value,
+            sessionId: sessionId.value,
+            ...params,
+        }),
+        query: route.query,
+    })
+}
+
+function onFilesNavigate({ rootKey, filePath, replace }) {
+    navigateInTab('files', buildFilesRouteParams({ rootKey, filePath }), replace ? 'replace' : 'push')
+}
+
+function onGitNavigate({ rootKey, commitRef, filePath, replace }) {
+    navigateInTab('git', buildGitRouteParams({ rootKey, commitRef, filePath }), replace ? 'replace' : 'push')
+}
+
+function onTerminalNavigate({ termIndex, replace }) {
+    navigateInTab('terminal', buildTerminalRouteParams({ termIndex }), replace ? 'replace' : 'push')
+}
 
 /**
  * Navigate to a specific tab by panel name.
@@ -291,32 +302,27 @@ function switchToTab(panel) {
     if (panel === 'main') {
         // Navigate to session without subagent
         router.push({
-            name: isAllProjectsMode.value ? 'projects-session' : 'session',
+            name: buildSessionBaseRouteName(isAllProjectsMode.value),
             params: {
                 projectId: projectId.value,
                 sessionId: sessionId.value
-            }
+            },
+            query: route.query,
         })
     } else if (panel.startsWith('agent-')) {
         // Navigate to subagent
         const agentId = panel.replace('agent-', '')
         router.push({
-            name: isAllProjectsMode.value ? 'projects-session-subagent' : 'session-subagent',
+            name: buildSubagentRouteName(isAllProjectsMode.value),
             params: {
                 projectId: projectId.value,
                 sessionId: sessionId.value,
                 subagentId: agentId
-            }
+            },
+            query: route.query,
         })
     } else if (['files', 'git', 'terminal'].includes(panel)) {
-        // Navigate to tool tab
-        router.push({
-            name: isAllProjectsMode.value ? `projects-session-${panel}` : `session-${panel}`,
-            params: {
-                projectId: projectId.value,
-                sessionId: sessionId.value
-            }
-        })
+        navigateInTab(panel)
     }
 }
 
@@ -564,21 +570,23 @@ function closeTab(tabId) {
             // Go to the previous subagent tab (use current tabs, not yet updated)
             const prevTab = tabs[index - 1]
             router.push({
-                name: isAllProjectsMode.value ? 'projects-session-subagent' : 'session-subagent',
+                name: buildSubagentRouteName(isAllProjectsMode.value),
                 params: {
                     projectId: projectId.value,
                     sessionId: sessionId.value,
                     subagentId: prevTab.agentId
-                }
+                },
+                query: route.query,
             })
         } else {
             // No more subagent tabs, go to main
             router.push({
-                name: isAllProjectsMode.value ? 'projects-session' : 'session',
+                name: buildSessionBaseRouteName(isAllProjectsMode.value),
                 params: {
                     projectId: projectId.value,
                     sessionId: sessionId.value
-                }
+                },
+                query: route.query,
             })
         }
     }
@@ -611,11 +619,6 @@ watch(subagentId, (newSubagentId) => {
 }, { immediate: true })
 
 // Sync active tab in store when the route changes for THIS session.
-// Two guards prevent incorrect overwrites with KeepAlive:
-// 1. isActive: when reactivating, the watcher fires before onActivated sets isActive=true,
-//    so we skip the sync and let restoreActiveTab() handle it properly.
-// 2. sessionId check: when navigating to a DIFFERENT session, the route changes but this
-//    cached instance is still alive — we must not sync another session's route as ours.
 watch(activeTabId, (newTabId) => {
     if (!sessionId.value) return
     if (!isActive.value) return
@@ -1049,35 +1052,42 @@ onBeforeUnmount(() => {
                     ref="filesPanelRef"
                     :project-id="session?.project_id"
                     :session-id="session?.id"
-                    :synced-git-dir="syncedGitDirPath"
                     :git-directory="session?.git_directory"
                     :session-cwd="session?.cwd"
                     :project-git-root="store.getProject(session?.project_id)?.git_root"
                     :project-directory="store.getProject(session?.project_id)?.directory"
+                    :route-root-key="activeTabId === 'files' ? filesRouteRootKey : undefined"
+                    :route-file-path="activeTabId === 'files' ? filesRouteFilePath : undefined"
                     :active="isActive && activeTabId === 'files'"
                     :is-draft="session?.draft === true"
-                    @root-changed="onRootChanged"
+                    @navigate="onFilesNavigate"
                 />
             </wa-tab-panel>
             <wa-tab-panel v-if="hasGitRepo" name="git">
                 <GitPanel
+                    ref="gitPanelRef"
                     :project-id="session?.project_id"
                     :session-id="session?.id"
-                    :synced-git-dir="syncedGitDirPath"
                     :git-directory="session?.git_directory"
                     :project-git-root="store.getProject(session?.project_id)?.git_root"
                     :initial-branch="session?.git_branch || ''"
+                    :route-root-key="activeTabId === 'git' ? gitRouteRootKey : undefined"
+                    :route-commit-ref="activeTabId === 'git' ? gitRouteCommitRef : undefined"
+                    :route-file-path="activeTabId === 'git' ? gitRouteFilePath : undefined"
                     :active="isActive && activeTabId === 'git'"
                     :is-draft="session?.draft === true"
-                    @root-changed="onRootChanged"
+                    @navigate="onGitNavigate"
                 />
             </wa-tab-panel>
             <wa-tab-panel name="terminal">
                 <TerminalPanel
+                    ref="terminalPanelRef"
                     :context-key="`s:${session.id}`"
                     :session-id="session.id"
                     :project-id="session.project_id"
+                    :route-term-index="activeTabId === 'terminal' ? terminalRouteTermIndex : undefined"
                     :active="isActive && activeTabId === 'terminal'"
+                    @navigate="onTerminalNavigate"
                 />
             </wa-tab-panel>
         </wa-tab-group>

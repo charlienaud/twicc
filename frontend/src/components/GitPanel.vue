@@ -17,7 +17,7 @@ import { searchTreeFiles } from '../utils/treeSearch'
 import { useCodeCommentsStore, buildCommentedPathsSet } from '../stores/codeComments'
 import { usePanZoom, useSyncedPanZoom } from '../composables/usePanZoom'
 
-const emit = defineEmits(['root-changed'])
+const emit = defineEmits(['navigate'])
 
 const props = defineProps({
     projectId: {
@@ -36,10 +36,6 @@ const props = defineProps({
         type: String,
         default: null,
     },
-    syncedGitDir: {
-        type: String,
-        default: null,
-    },
     initialBranch: {
         type: String,
         default: '',
@@ -52,12 +48,33 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    routeRootKey: {
+        default: undefined,
+    },
+    routeCommitRef: {
+        default: undefined,
+    },
+    routeFilePath: {
+        default: undefined,
+    },
 })
 
 const settingsStore = useSettingsStore()
 const codeCommentsStore = useCodeCommentsStore()
 const refreshButtonId = useId()
 const gitDirButtonId = useId()
+let syncingFromRoute = false
+const routeRootIssue = ref(null)
+const routeCommitIssue = ref(null)
+const routeFileIssue = ref(null)
+
+function makeRouteIssue(before, detail = null, after = '') {
+    return { before, detail, after }
+}
+
+const routeIssueMessage = computed(() =>
+    routeRootIssue.value || routeCommitIssue.value || routeFileIssue.value
+)
 
 // ---------------------------------------------------------------------------
 // Git root selector
@@ -74,20 +91,36 @@ const availableGitRoots = computed(() => {
 
     // Same path — merge into one entry
     if (sessionGit && projectGit && sessionGit === projectGit) {
-        return [{ key: 'git', label: 'Git root', path: sessionGit }]
+        return [{ key: 'session', label: 'Git root', path: sessionGit }]
     }
 
     const roots = []
     if (sessionGit) {
-        roots.push({ key: 'session-git', label: 'Session git root', path: sessionGit })
+        roots.push({ key: 'session', label: 'Session git root', path: sessionGit })
     }
     if (projectGit && projectGit !== sessionGit) {
-        roots.push({ key: 'project-git', label: 'Project git root', path: projectGit })
+        roots.push({ key: 'project', label: 'Project git root', path: projectGit })
     }
     return roots
 })
 
 const selectedRootKey = ref(null)
+
+function clearSelectedFile() {
+    if (fileTreePanelRef.value?.selectedFile != null) {
+        fileTreePanelRef.value.selectedFile = null
+    }
+}
+
+function emitNavigate({ rootKey = selectedRootKey.value, commitRef, filePath, replace = false }) {
+    if (!props.active) return
+    emit('navigate', {
+        rootKey,
+        commitRef: commitRef ?? (selectedCommit.value?.hash ?? 'index'),
+        filePath,
+        replace,
+    })
+}
 
 /**
  * Set of root keys whose directories no longer exist on disk.
@@ -103,7 +136,7 @@ const effectiveGitDirectory = computed(() => {
     const roots = availableGitRoots.value
     if (!roots.length) return null
     const selected = roots.find(r => r.key === selectedRootKey.value)
-    return selected ? selected.path : roots[0].path
+    return selected ? selected.path : null
 })
 
 // Reset selection when the available roots change (e.g. new session)
@@ -121,11 +154,9 @@ watch(availableGitRoots, (roots) => {
 function handleRootSelect(key) {
     if (key !== selectedRootKey.value && !missingRoots.value.has(key)) {
         selectedRootKey.value = key
-        // Emit the path for cross-tab sync
-        const root = availableGitRoots.value.find(r => r.key === key)
-        if (root) {
-            emit('root-changed', root.path)
-        }
+        selectedCommit.value = null
+        clearSelectedFile()
+        emitNavigate({ rootKey: key, commitRef: 'index' })
     }
 }
 
@@ -139,16 +170,6 @@ function onGitDirDropdownSelect(event) {
         handleRootSelect(value)
     }
 }
-
-// Sync from Files tab: when the synced git directory changes, select the matching root.
-// Does NOT emit 'root-changed' to avoid infinite loops.
-watch(() => props.syncedGitDir, (path) => {
-    if (!path) return
-    const root = availableGitRoots.value.find(r => r.path === path)
-    if (root && root.key !== selectedRootKey.value && !missingRoots.value.has(root.key)) {
-        selectedRootKey.value = root.key
-    }
-})
 
 // ─── Mobile breakpoint detection ─────────────────────────────────────────────
 // Uses a ResizeObserver on .main-content instead of a viewport media query,
@@ -240,9 +261,16 @@ const selectedCommit = ref(null)
  */
 const commitFilesData = ref(null)
 const commitFilesLoading = ref(false)
+const headerSelectedCommit = computed(() => (
+    routeCommitIssue.value
+        ? { message: routeCommitIssue.value }
+        : selectedCommit.value
+))
+const showGitMainContent = computed(() => !routeRootIssue.value && !routeCommitIssue.value)
 
 /** Stats for the header: commit-specific when a commit is selected, index otherwise. */
 const headerStats = computed(() => {
+    if (routeRootIssue.value || routeCommitIssue.value) return null
     if (!selectedCommit.value || selectedCommit.value.hash === 'index') {
         return indexFilesData.value?.stats ?? null
     }
@@ -260,8 +288,15 @@ function onBranchChange(event) {
 
 function onCommitSelected(commit) {
     selectedCommit.value = commit || null
+    clearSelectedFile()
     if (commit) {
         gitLogOpen.value = false
+    }
+    if (!syncingFromRoute) {
+        emitNavigate({
+            rootKey: selectedRootKey.value,
+            commitRef: commit?.hash ?? 'index',
+        })
     }
 }
 
@@ -271,6 +306,7 @@ function onCommitSelected(commit) {
 
 /** The current files data: index when viewing uncommitted, commit-specific otherwise. */
 const currentFilesData = computed(() => {
+    if (routeRootIssue.value || routeCommitIssue.value) return null
     if (!selectedCommit.value || selectedCommit.value.hash === 'index') {
         return indexFilesData.value
     }
@@ -309,6 +345,7 @@ const displayTree = computed(() => {
 
 /** Whether we are viewing the index (uncommitted changes) vs a specific commit. */
 const isViewingIndex = computed(() => {
+    if (routeRootIssue.value || routeCommitIssue.value) return false
     return !selectedCommit.value || selectedCommit.value.hash === 'index'
 })
 
@@ -345,6 +382,10 @@ provide('gitCommitHasDecoration', (hash) => {
 watch(selectedCommit, async (commit) => {
     // Reset data
     commitFilesData.value = null
+
+    if (routeCommitIssue.value || routeRootIssue.value) {
+        return
+    }
 
     if (!commit || commit.hash === 'index') {
         // Re-fetch index files silently (they may have changed)
@@ -466,7 +507,6 @@ async function handleGitAction(action, { path }) {
         console.error(`Git ${action} error:`, e)
     }
 
-    _preserveFileSelection = true
     await refreshIndexFiles()
 }
 
@@ -476,22 +516,13 @@ function doSearch(query) {
     return searchTreeFiles(tree, query)
 }
 
-/**
- * Find the first file node in a tree (depth-first).
- * Returns the full path built by joining ancestor names, matching
- * the path format used by FileTree (rootPath/dir/dir/file).
- */
-function findFirstFile(node, parentPath = '') {
-    if (!node) return null
-    const currentPath = parentPath ? `${parentPath}/${node.name}` : node.name
-    if (node.type === 'file') return currentPath
-    if (node.children) {
-        for (const child of node.children) {
-            const found = findFirstFile(child, currentPath)
-            if (found) return found
-        }
-    }
-    return null
+function handleFileSelect(path) {
+    if (!props.active || syncingFromRoute) return
+    emitNavigate({
+        rootKey: selectedRootKey.value,
+        commitRef: selectedCommit.value?.hash ?? 'index',
+        filePath: path || undefined,
+    })
 }
 
 /**
@@ -521,47 +552,19 @@ function fileExistsInTree(node, targetPath) {
     return false
 }
 
-// When set, the displayTree watcher will try to keep the current file
-// selection instead of auto-selecting the first file.
-let _preserveFileSelection = false
-
-// Re-run search and auto-select first file when the tree data changes
-// (e.g. switching between index and commit)
+// Re-run search and clear stale file selection when the tree data changes.
 watch(displayTree, (tree) => {
     fileTreePanelRef.value?.clearSearch()
 
-    if (tree && _preserveFileSelection) {
-        _preserveFileSelection = false
-        // Keep the current file if it still exists in the new tree.
-        // Don't fetch diff here — the caller (refreshIndexFiles or the
-        // active watcher) handles diff refresh separately.
-        const current = selectedFile.value
-        if (current && fileExistsInTree(tree, current)) {
-            return
-        }
-    }
-    _preserveFileSelection = false
-
-    // Auto-select first file in the new tree
-    if (tree) {
-        const firstFilePath = findFirstFile(tree)
-        if (firstFilePath) {
-            // Reset selection first so the selectedFile watcher fires even if
-            // the same file path is re-selected (e.g. switching commits where
-            // both have the same file).
-            if (fileTreePanelRef.value) {
-                fileTreePanelRef.value.selectedFile = null
-            }
-            nextTick(() => {
-                fileTreePanelRef.value?.onFileSelect(firstFilePath)
-            })
-        }
-    } else {
+    if (!tree) {
         // Tree is empty/null: clear stale selection and diff data
-        if (fileTreePanelRef.value) {
-            fileTreePanelRef.value.selectedFile = null
-        }
+        clearSelectedFile()
         diffData.value = null
+        return
+    }
+
+    if (selectedFile.value && !fileExistsInTree(tree, selectedFile.value)) {
+        clearSelectedFile()
     }
 })
 
@@ -734,18 +737,26 @@ async function fetchGitLog() {
         if (!res.ok) {
             const data = await res.json().catch(() => ({}))
 
-            // If the directory was not found, mark this root as missing
-            // and automatically fall back to the other root when possible.
+            // If the directory was not found, mark this root as missing and
+            // surface it as a route issue without switching to another root.
             if (res.status === 404 && selectedRootKey.value) {
                 missingRoots.value = new Set([...missingRoots.value, selectedRootKey.value])
-                const fallback = availableGitRoots.value.find(
-                    r => r.key !== selectedRootKey.value && !missingRoots.value.has(r.key)
+                routeRootIssue.value = makeRouteIssue(
+                    'Git root ',
+                    props.routeRootKey || selectedRootKey.value,
+                    ' is no longer available.',
                 )
-                if (fallback) {
-                    selectedRootKey.value = fallback.key
-                    // The watcher on effectiveGitDirectory will re-trigger fetchGitLog
-                    return
-                }
+                entries.value = []
+                currentBranch.value = ''
+                headCommitHash.value = ''
+                hasMore.value = false
+                branches.value = []
+                selectedBranch.value = ''
+                indexFilesData.value = null
+                commitFilesData.value = null
+                diffData.value = null
+                diffError.value = null
+                return
             }
 
             error.value = data.error || `Request failed (${res.status})`
@@ -817,12 +828,201 @@ async function refreshGitLog() {
     }
 }
 
+watch(
+    () => [props.active, props.routeRootKey, availableGitRoots.value.map(root => root.key).join('|')],
+    ([active, routeRootKey]) => {
+        if (!active) return
+        const roots = availableGitRoots.value
+        if (!roots.length) return
+
+        if (!routeRootKey) {
+            routeRootIssue.value = null
+            const defaultRoot = roots.find(root => !missingRoots.value.has(root.key)) || roots[0]
+            syncingFromRoute = true
+            selectedRootKey.value = defaultRoot?.key ?? null
+            selectedCommit.value = null
+            clearSelectedFile()
+            nextTick(() => {
+                syncingFromRoute = false
+            })
+            return
+        }
+
+        const requestedRoot = roots.find(root => root.key === routeRootKey)
+        if (!requestedRoot) {
+            routeRootIssue.value = makeRouteIssue('Git root ', routeRootKey, ' is not available.')
+            entries.value = []
+            currentBranch.value = ''
+            headCommitHash.value = ''
+            hasMore.value = false
+            branches.value = []
+            selectedBranch.value = ''
+            indexFilesData.value = null
+            commitFilesData.value = null
+            diffData.value = null
+            diffError.value = null
+            if (selectedRootKey.value !== null) {
+                syncingFromRoute = true
+                selectedRootKey.value = null
+                selectedCommit.value = null
+                clearSelectedFile()
+                nextTick(() => {
+                    syncingFromRoute = false
+                })
+            }
+            return
+        }
+
+        if (missingRoots.value.has(routeRootKey)) {
+            routeRootIssue.value = makeRouteIssue('Git root ', routeRootKey, ' is no longer available.')
+            entries.value = []
+            currentBranch.value = ''
+            headCommitHash.value = ''
+            hasMore.value = false
+            branches.value = []
+            selectedBranch.value = ''
+            indexFilesData.value = null
+            commitFilesData.value = null
+            diffData.value = null
+            diffError.value = null
+            if (selectedRootKey.value !== routeRootKey) {
+                syncingFromRoute = true
+                selectedRootKey.value = routeRootKey
+                selectedCommit.value = null
+                clearSelectedFile()
+                nextTick(() => {
+                    syncingFromRoute = false
+                })
+            }
+            return
+        }
+
+        routeRootIssue.value = null
+
+        if (selectedRootKey.value !== requestedRoot.key) {
+            syncingFromRoute = true
+            selectedRootKey.value = requestedRoot.key
+            selectedCommit.value = null
+            clearSelectedFile()
+            nextTick(() => {
+                syncingFromRoute = false
+            })
+        }
+    },
+    { immediate: true },
+)
+
+watch(
+    () => [props.active, started.value, loading.value, refreshing.value, selectedRootKey.value, props.routeCommitRef, entries.value.length],
+    ([active, started, isLoading, isRefreshing]) => {
+        if (!active || !started || isLoading || isRefreshing || !selectedRootKey.value || routeRootIssue.value) return
+
+        const targetCommitRef = props.routeCommitRef ?? 'index'
+
+        if (props.routeCommitRef == null) {
+            routeCommitIssue.value = null
+            syncingFromRoute = true
+            selectedCommit.value = null
+            clearSelectedFile()
+            nextTick(() => {
+                syncingFromRoute = false
+            })
+            return
+        }
+
+        if (targetCommitRef === 'index') {
+            routeCommitIssue.value = null
+            if (selectedCommit.value?.hash !== 'index' && selectedCommit.value !== null) {
+                syncingFromRoute = true
+                selectedCommit.value = null
+                clearSelectedFile()
+                nextTick(() => {
+                    syncingFromRoute = false
+                })
+            }
+            return
+        }
+
+        const matchingCommit = entries.value.find(entry => entry.hash === targetCommitRef)
+        if (!matchingCommit) {
+            routeCommitIssue.value = makeRouteIssue('Commit ', targetCommitRef, ' is no longer available.')
+            syncingFromRoute = true
+            selectedCommit.value = null
+            clearSelectedFile()
+            nextTick(() => {
+                syncingFromRoute = false
+            })
+            return
+        }
+
+        routeCommitIssue.value = null
+
+        if (selectedCommit.value?.hash !== matchingCommit.hash) {
+            syncingFromRoute = true
+            selectedCommit.value = matchingCommit
+            clearSelectedFile()
+            nextTick(() => {
+                syncingFromRoute = false
+            })
+        }
+    },
+    { immediate: true },
+)
+
+watch(
+    () => [props.active, displayTree.value, props.routeFilePath, selectedRootKey.value, selectedCommit.value?.hash ?? 'index'],
+    async ([active, tree, routeFilePath, rootKey, commitHash]) => {
+        if (!active || !rootKey) return
+
+        if (routeFilePath == null) {
+            if (selectedFile.value) {
+                syncingFromRoute = true
+                clearSelectedFile()
+                await nextTick()
+                syncingFromRoute = false
+            }
+            if (routeFilePath === null) {
+                routeFileIssue.value = makeRouteIssue('Requested file path is invalid.')
+            } else {
+                routeFileIssue.value = null
+            }
+            return
+        }
+
+        if (!tree) return
+
+        if (!fileExistsInTree(tree, routeFilePath)) {
+            if (selectedFile.value) {
+                syncingFromRoute = true
+                clearSelectedFile()
+                await nextTick()
+                syncingFromRoute = false
+            }
+            routeFileIssue.value = makeRouteIssue('File ', routeFilePath, ' is no longer available in this view.')
+            return
+        }
+
+        routeFileIssue.value = null
+
+        if (selectedFile.value === routeFilePath) return
+
+        const rootPath = tree.name
+        const fullPath = rootPath ? `${rootPath}/${routeFilePath}` : routeFilePath
+        syncingFromRoute = true
+        await fileTreePanelRef.value?.scrollToPath(fullPath)
+        fileTreePanelRef.value?.onFileSelect(fullPath)
+        await nextTick()
+        syncingFromRoute = false
+    },
+    { immediate: true },
+)
+
 // ---------------------------------------------------------------------------
 // Re-fetch when git root changes
 // ---------------------------------------------------------------------------
 
 watch(effectiveGitDirectory, (newDir, oldDir) => {
-    if (!oldDir || !newDir || newDir === oldDir) return
+    if (!newDir || newDir === oldDir) return
     if (!started.value) return
 
     // Full reset of all git state
@@ -847,20 +1047,10 @@ watch(effectiveGitDirectory, (newDir, oldDir) => {
 // Lazy init + auto-refresh when the tab becomes active
 // ---------------------------------------------------------------------------
 
-// Snapshot of the selected file when the tab is deactivated, so we can
-// restore it after a refresh.  We cannot rely on the computed selectedFile
-// at reactivation time because intermediate reactive updates (displayTree
-// watcher, etc.) may have already reset it to the first file.
-let _savedFileBeforeDeactivation = null
-
 watch(
     () => props.active,
     async (active) => {
-        if (!active) {
-            // Save current file selection before leaving the tab
-            _savedFileBeforeDeactivation = selectedFile.value
-            return
-        }
+        if (!active) return
 
         if (!started.value) {
             // First activation: full initial fetch
@@ -869,12 +1059,8 @@ watch(
             return
         }
 
-        // Subsequent activations: refresh keeping current state
-        const previousFile = _savedFileBeforeDeactivation
-        const isViewingIndexBefore =
-            !selectedCommit.value || selectedCommit.value.hash === 'index'
-
-        _preserveFileSelection = true
+        // Subsequent activations refresh data; route watchers restore the
+        // canonical commit/file selection when needed.
         await refreshGitLog()
 
         // If a commit was selected, check it still exists in the new data
@@ -888,27 +1074,8 @@ watch(
         }
 
         // If viewing uncommitted changes, refresh the file tree & diff
-        if (isViewingIndexBefore) {
-            _preserveFileSelection = true
+        if ((!selectedCommit.value || selectedCommit.value.hash === 'index') && !routeCommitIssue.value) {
             await refreshIndexFiles()
-        }
-
-        // Restore file selection & diff.  The displayTree watcher may have
-        // already re-selected the file via the _preserveFileSelection flag,
-        // but we do an authoritative fetchDiff at the end to be sure.
-        const tree = displayTree.value
-        if (previousFile && tree && fileExistsInTree(tree, previousFile)) {
-            // Re-select the file in the tree panel (builds the full path)
-            const rootPath = tree.name
-            const fullPath = rootPath ? `${rootPath}/${previousFile}` : previousFile
-            await nextTick()
-            fileTreePanelRef.value?.onFileSelect(fullPath)
-            await nextTick()
-            fileTreePanelRef.value?.scrollToPath(fullPath)
-        } else if (!tree || !findFirstFile(tree)) {
-            // Tree is empty or null (e.g. no uncommitted changes left):
-            // clear stale diff data so the editor doesn't show old content.
-            diffData.value = null
         }
     },
     { immediate: true },
@@ -1031,7 +1198,7 @@ onMounted(() => {
 
         <!-- Error state -->
         <div v-else-if="error" class="panel-state">
-            <wa-callout variant="danger" appearance="outlined">
+            <wa-callout variant="danger" appearance="filled-outlined" class="pane-callout">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                 <div class="error-content">
                     <div>{{ error }}</div>
@@ -1049,6 +1216,16 @@ onMounted(() => {
         </div>
 
         <!-- Empty state (no commits) -->
+        <div v-else-if="routeIssueMessage && entries.length === 0" class="panel-state">
+            <wa-callout variant="warning" appearance="filled-outlined" class="pane-callout">
+                <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                <span>{{ routeIssueMessage.before }}</span>
+                <span v-if="routeIssueMessage.detail" class="pane-callout-detail">{{ routeIssueMessage.detail }}</span>
+                <span>{{ routeIssueMessage.after }}</span>
+            </wa-callout>
+        </div>
+
+        <!-- Empty state (no commits) -->
         <div v-else-if="started && entries.length === 0" class="panel-state">
             <span class="panel-placeholder">No commits found</span>
         </div>
@@ -1057,7 +1234,7 @@ onMounted(() => {
         <template v-else-if="entries.length > 0">
             <!-- Header with commit selector -->
             <GitPanelHeader
-                :selected-commit="selectedCommit"
+                :selected-commit="headerSelectedCommit"
                 :selected-branch="selectedBranch"
                 :stats="headerStats"
                 :stats-loading="commitFilesLoading"
@@ -1068,7 +1245,20 @@ onMounted(() => {
             <wa-divider></wa-divider>
 
             <!-- Content area (position: relative so overlay can cover it) -->
-            <div class="git-panel-content">
+            <div v-if="showGitMainContent" class="git-panel-content">
+                <div v-if="routeIssueMessage" class="pane-callout-overlay">
+                    <wa-callout
+                        variant="warning"
+                        appearance="filled-outlined"
+                        class="pane-callout"
+                    >
+                        <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                        <span>{{ routeIssueMessage.before }}</span>
+                        <span v-if="routeIssueMessage.detail" class="pane-callout-detail">{{ routeIssueMessage.detail }}</span>
+                        <span>{{ routeIssueMessage.after }}</span>
+                    </wa-callout>
+                </div>
+
                 <!-- ═══ Hidden owners: single instances that get reparented ═══ -->
                 <div ref="treeOwnerRef" class="reparent-owner">
                     <FileTreePanel
@@ -1088,6 +1278,7 @@ onMounted(() => {
                         enable-context-menu
                         :context-menu-mode="contextMenuMode"
                         :git-directory="effectiveGitDirectory"
+                        @file-select="handleFileSelect"
                         @refresh="refreshIndexFiles"
                         @option-select="handleOptionsSelect"
                         @git-stage="handleGitAction('git-stage', $event)"
@@ -1363,6 +1554,28 @@ onMounted(() => {
 
 wa-callout {
     max-width: min(40rem, 90dvh);
+}
+
+.pane-callout-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--wa-space-m);
+    pointer-events: none;
+}
+
+.pane-callout {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: min(40rem, 100%);
+    pointer-events: auto;
+}
+
+.pane-callout-detail {
+    font-family: var(--wa-font-family-code);
 }
 
 .panel-placeholder {

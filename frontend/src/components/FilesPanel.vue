@@ -6,7 +6,7 @@ import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
 import { useCodeCommentsStore, buildCommentedPathsSet } from '../stores/codeComments'
 
-const emit = defineEmits(['root-changed'])
+const emit = defineEmits(['navigate'])
 
 const props = defineProps({
     projectId: {
@@ -14,10 +14,6 @@ const props = defineProps({
         default: null,
     },
     sessionId: {
-        type: String,
-        default: null,
-    },
-    syncedGitDir: {
         type: String,
         default: null,
     },
@@ -57,6 +53,12 @@ const props = defineProps({
         type: Array,
         default: null,
     },
+    routeRootKey: {
+        default: undefined,
+    },
+    routeFilePath: {
+        default: undefined,
+    },
 })
 
 // ─── Mobile breakpoint detection ─────────────────────────────────────────────
@@ -95,6 +97,7 @@ const started = ref(false)
 // immediate watchers below may reference it before the "File selection" section.
 const fileTreePanelRef = ref(null)
 const filePaneRef = ref(null)
+let syncingFromRoute = false
 
 // ─── Root directory selection ────────────────────────────────────────────────
 
@@ -139,12 +142,12 @@ const availableRoots = computed(() => {
     }
 
     if (sessionGit) {
-        register(sessionGit, 'git_root', 'git')
+        register(sessionGit, 'git_root', 'git-root')
     }
-    register(cwd, 'cwd', 'cwd')
+    register(cwd, 'cwd', 'session')
     register(project, 'project_dir', 'project')
     if (!sessionGit) {
-        register(projectGitRoot, 'git_root', 'git')
+        register(projectGitRoot, 'git_root', 'git-root')
     }
 
     // Step 2: Build a human-readable label from the set of roles.
@@ -184,6 +187,17 @@ const availableRoots = computed(() => {
 
 const selectedRootKey = ref(null)
 
+function clearSelectedFile() {
+    if (fileTreePanelRef.value?.selectedFile != null) {
+        fileTreePanelRef.value.selectedFile = null
+    }
+}
+
+function emitNavigate({ rootKey = selectedRootKey.value, filePath = undefined, replace = false }) {
+    if (!props.active) return
+    emit('navigate', { rootKey, filePath, replace })
+}
+
 /**
  * Set of root keys whose directories no longer exist on disk.
  * Populated when fetchTree receives a 404 for a root directory.
@@ -198,7 +212,7 @@ const directory = computed(() => {
     const roots = availableRoots.value
     if (!roots.length) return null
     const selected = roots.find(r => r.key === selectedRootKey.value)
-    return selected ? selected.path : roots[0].path
+    return selected ? selected.path : null
 })
 
 // Reset selection when the available roots change (e.g. new session)
@@ -216,34 +230,28 @@ watch(availableRoots, (roots) => {
 function handleRootSelect(key) {
     if (key !== selectedRootKey.value && !missingRoots.value.has(key)) {
         selectedRootKey.value = key
-        // Emit the path for cross-tab sync.
-        // Always emit regardless of key — when git root and project directory
-        // are the same path, the merged entry has key 'project' but its path
-        // is still a valid git root that the Git tab can sync to.
-        const root = availableRoots.value.find(r => r.key === key)
-        if (root) {
-            emit('root-changed', root.path)
-        }
+        clearSelectedFile()
+        emitNavigate({ rootKey: key })
     }
 }
 
 /**
- * Programmatically select the root whose path matches the given git directory.
- * Used for cross-tab synchronization (Git tab → Files tab).
- * Does NOT emit 'root-changed' to avoid infinite loops.
+ * Programmatically select the root whose path matches the given directory.
+ * Used by explicit in-app navigation helpers before revealing a target file.
+ * Does not emit navigation because the caller is responsible for the URL.
  */
 function setRootByPath(path) {
     if (!path) return
     const root = availableRoots.value.find(r => r.path === path)
     if (root && root.key !== selectedRootKey.value && !missingRoots.value.has(root.key)) {
+        syncingFromRoute = true
         selectedRootKey.value = root.key
+        clearSelectedFile()
+        nextTick(() => {
+            syncingFromRoute = false
+        })
     }
 }
-
-// Sync from Git tab: when the synced git directory changes, select the matching root
-watch(() => props.syncedGitDir, (path) => {
-    if (path) setRootByPath(path)
-})
 
 // ─── Display options ─────────────────────────────────────────────────────────
 
@@ -267,6 +275,15 @@ function optionsQuery() {
 const tree = ref(null)
 const loading = ref(false)
 const error = ref(null)
+const loadedDirectory = ref(null)
+const routeRootIssue = ref(null)
+const routeFileIssue = ref(null)
+
+function makeRouteIssue(before, detail = null, after = '') {
+    return { before, detail, after }
+}
+
+const routeIssueMessage = computed(() => routeRootIssue.value || routeFileIssue.value)
 
 /**
  * Fetch the directory tree from the backend.
@@ -274,11 +291,13 @@ const error = ref(null)
 async function fetchTree(dirPath) {
     if (!resolvedApiPrefix.value || !dirPath) {
         tree.value = null
+        loadedDirectory.value = null
         return
     }
 
     loading.value = true
     error.value = null
+    loadedDirectory.value = null
 
     try {
         const res = await apiFetch(
@@ -287,29 +306,33 @@ async function fetchTree(dirPath) {
         if (!res.ok) {
             const data = await res.json()
 
-            // If the directory was not found, mark this root as missing
-            // and automatically fall back to the next available root.
+            // If the directory was not found, mark this root as missing and
+            // surface it as a route issue without switching to another root.
             if (res.status === 404 && selectedRootKey.value) {
                 missingRoots.value = new Set([...missingRoots.value, selectedRootKey.value])
-                const fallback = availableRoots.value.find(r => !missingRoots.value.has(r.key))
-                if (fallback) {
-                    selectedRootKey.value = fallback.key
-                    // The watcher on `directory` will re-trigger fetchTree
-                    // with the fallback directory, so we can return here.
-                    return
-                }
+                routeRootIssue.value = makeRouteIssue(
+                    'Root ',
+                    props.routeRootKey || selectedRootKey.value,
+                    ' is no longer available.',
+                )
+                tree.value = null
+                loadedDirectory.value = null
+                return
             }
 
             error.value = data.error || `HTTP ${res.status}`
             tree.value = null
+            loadedDirectory.value = null
             return
         }
         const data = await res.json()
         isGit.value = !!data.is_git
         tree.value = data
+        loadedDirectory.value = dirPath
     } catch (err) {
         error.value = err.message
         tree.value = null
+        loadedDirectory.value = null
     } finally {
         loading.value = false
     }
@@ -410,7 +433,7 @@ async function refresh(hints) {
     if (scrollTarget && tree.value) {
         const found = await fileTreePanelRef.value?.scrollToPath(scrollTarget)
         if (!found) {
-            fileTreePanelRef.value.selectedFile.value = null
+            clearSelectedFile()
             await fileTreePanelRef.value?.scrollToPath(directory.value)
         }
     }
@@ -433,6 +456,154 @@ const selectedAbsPath = computed(() => {
     const dir = directory.value
     return `${dir === '/' ? '' : dir}/${selectedFile.value}`
 })
+
+function handleFileSelect(path) {
+    if (!props.active || syncingFromRoute) return
+    routeFileIssue.value = null
+    emitNavigate({
+        rootKey: selectedRootKey.value,
+        filePath: path || undefined,
+    })
+}
+
+async function waitForTreePanelReady() {
+    await nextTick()
+    await nextTick()
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+}
+
+async function revealRouteFile(absolutePath) {
+    const treePanel = fileTreePanelRef.value
+    if (!treePanel) return false
+
+    treePanel.clearSearch(false)
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        await waitForTreePanelReady()
+        if (await treePanel.scrollToPath(absolutePath)) {
+            return true
+        }
+    }
+
+    return false
+}
+
+watch(
+    () => [props.active, props.routeRootKey, availableRoots.value.map(root => root.key).join('|')],
+    ([active, routeRootKey]) => {
+        if (!active) return
+        const roots = availableRoots.value
+        if (!roots.length) return
+
+        if (!routeRootKey) {
+            routeRootIssue.value = null
+            const defaultRoot = roots.find(root => !missingRoots.value.has(root.key)) || roots[0]
+            if (selectedRootKey.value !== defaultRoot?.key) {
+                syncingFromRoute = true
+                selectedRootKey.value = defaultRoot?.key ?? null
+                clearSelectedFile()
+                nextTick(() => {
+                    syncingFromRoute = false
+                })
+            }
+            return
+        }
+
+        const requestedRoot = roots.find(root => root.key === routeRootKey)
+        if (!requestedRoot) {
+            routeRootIssue.value = makeRouteIssue('Root ', routeRootKey, ' is not available.')
+            if (selectedRootKey.value !== null) {
+                syncingFromRoute = true
+                selectedRootKey.value = null
+                clearSelectedFile()
+                nextTick(() => {
+                    syncingFromRoute = false
+                })
+            }
+            return
+        }
+
+        if (missingRoots.value.has(routeRootKey)) {
+            routeRootIssue.value = makeRouteIssue('Root ', routeRootKey, ' is no longer available.')
+            if (selectedRootKey.value !== routeRootKey) {
+                syncingFromRoute = true
+                selectedRootKey.value = routeRootKey
+                clearSelectedFile()
+                nextTick(() => {
+                    syncingFromRoute = false
+                })
+            }
+            return
+        }
+
+        routeRootIssue.value = null
+
+        if (selectedRootKey.value !== requestedRoot.key) {
+            syncingFromRoute = true
+            selectedRootKey.value = requestedRoot.key
+            clearSelectedFile()
+            nextTick(() => {
+                syncingFromRoute = false
+            })
+        }
+    },
+    { immediate: true },
+)
+
+watch(
+    () => [props.active, tree.value, directory.value, loadedDirectory.value, props.routeFilePath, props.routeRootKey, loading.value],
+    async ([active, treeData, dirPath, loadedDir, routeFilePath, , isLoading]) => {
+        if (!active || !dirPath || !selectedRootKey.value) return
+
+        if (!treeData || isLoading || loadedDir !== dirPath) {
+            if (routeFilePath != null && selectedFile.value) {
+                syncingFromRoute = true
+                clearSelectedFile()
+                await nextTick()
+                syncingFromRoute = false
+            }
+            return
+        }
+
+        if (routeFilePath == null) {
+            if (selectedFile.value) {
+                syncingFromRoute = true
+                clearSelectedFile()
+                await nextTick()
+                syncingFromRoute = false
+            }
+            if (routeFilePath === null) {
+                routeFileIssue.value = makeRouteIssue('Requested file path is invalid.')
+            } else {
+                routeFileIssue.value = null
+            }
+            return
+        }
+
+        routeFileIssue.value = null
+
+        const absolutePath = `${dirPath === '/' ? '' : dirPath}/${routeFilePath}`
+        syncingFromRoute = true
+        const found = await revealRouteFile(absolutePath)
+        if (found) {
+            if (selectedFile.value !== routeFilePath) {
+                fileTreePanelRef.value?.onFileSelect(absolutePath)
+            }
+            await waitForTreePanelReady()
+            await fileTreePanelRef.value?.scrollToPath(absolutePath)
+        } else {
+            clearSelectedFile()
+            routeFileIssue.value = makeRouteIssue(
+                'File ',
+                routeFilePath,
+                ' is no longer available in this root.',
+            )
+        }
+        await nextTick()
+        syncingFromRoute = false
+    },
+    { immediate: true },
+)
 
 // ─── Split panel position (KeepAlive-safe) ──────────────────────────────────
 
@@ -611,6 +782,19 @@ defineExpose({ revealFile, setRootByPath })
 
 <template>
     <div class="files-panel">
+        <div v-if="routeIssueMessage" class="pane-callout-overlay">
+            <wa-callout
+                variant="warning"
+                appearance="filled-outlined"
+                class="pane-callout"
+            >
+                <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                <span>{{ routeIssueMessage.before }}</span>
+                <span v-if="routeIssueMessage.detail" class="pane-callout-detail">{{ routeIssueMessage.detail }}</span>
+                <span>{{ routeIssueMessage.after }}</span>
+            </wa-callout>
+        </div>
+
         <!-- ═══ Hidden owners: single instances that get reparented ═══ -->
         <div ref="treeOwnerRef" class="reparent-owner">
             <FileTreePanel
@@ -631,6 +815,7 @@ defineExpose({ revealFile, setRootByPath })
                 :commented-paths="commentedPaths"
                 enable-context-menu
                 mode="files"
+                @file-select="handleFileSelect"
                 @refresh="refresh"
                 @option-select="handleOptionsSelect"
             >
@@ -732,6 +917,30 @@ defineExpose({ revealFile, setRootByPath })
     height: 100%;
     overflow: hidden;
     position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.pane-callout-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--wa-space-m);
+    pointer-events: none;
+}
+
+.pane-callout {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: min(40rem, 100%);
+    pointer-events: auto;
+}
+
+.pane-callout-detail {
+    font-family: var(--wa-font-family-code);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -741,7 +950,8 @@ defineExpose({ revealFile, setRootByPath })
 .mobile-layout {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -749,7 +959,8 @@ defineExpose({ revealFile, setRootByPath })
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .files-split-panel {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     --min: 120px;
     --max: 60%;
 

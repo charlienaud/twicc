@@ -39,7 +39,11 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    routeTermIndex: {
+        default: undefined,
+    },
 })
+const emit = defineEmits(['navigate'])
 
 const route = useRoute()
 const settingsStore = useSettingsStore()
@@ -140,14 +144,31 @@ const terminalApis = reactive(new Map())
 provide('registerTerminal', (index, api) => { terminalApis.set(index, api) })
 provide('unregisterTerminal', (index) => { terminalApis.delete(index) })
 
+const INVALID_ROUTE_TERM_INDEX = -1
+
 // --- Terminal tab management ---
 const terminals = ref([{ index: 0, label: 'Main' }])
 const activeIndex = ref(0)
 const nextIndex = ref(1) // monotonically increasing counter
+const pendingRouteTermIndex = ref(null)
+const unavailableRouteTermIndex = ref(undefined)
+let nextNavigationReplace = false
+let syncingFromRoute = false
+let backendIndicesReady = false
 
-const activeTabPanel = computed(() => `term-${activeIndex.value}`)
+const isRouteTermUnavailable = computed(() =>
+    unavailableRouteTermIndex.value !== undefined
+    && (backendIndicesReady || unavailableRouteTermIndex.value === INVALID_ROUTE_TERM_INDEX)
+)
+const fallbackTermIndex = computed(() => findFallbackTermIndex(props.routeTermIndex ?? activeIndex.value))
+const activeTabPanel = computed(() => isRouteTermUnavailable.value ? '__unavailable__' : `term-${activeIndex.value}`)
 const activeApi = computed(() => terminalApis.get(activeIndex.value) || null)
 const isActiveMain = computed(() => activeIndex.value === 0)
+const unavailableRouteMessage = computed(() => (
+    unavailableRouteTermIndex.value === INVALID_ROUTE_TERM_INDEX
+        ? 'Requested terminal is not available.'
+        : `Terminal \`${unavailableRouteTermIndex.value}\` is no longer available.`
+))
 
 // Flattened toolbar state from the active terminal's API.
 // Note: reactive Map's .get() wraps results in reactive(), which auto-unwraps
@@ -168,6 +189,26 @@ function createTerminal() {
     activeIndex.value = index
 }
 
+function findFallbackTermIndex(target = activeIndex.value) {
+    const sorted = [...terminals.value].map(t => t.index).sort((a, b) => a - b)
+    if (sorted.length === 0) return 0
+    const lowerOrEqual = sorted.filter(index => index <= target)
+    return lowerOrEqual.length ? lowerOrEqual[lowerOrEqual.length - 1] : sorted[0]
+}
+
+function syncActiveIndex(index) {
+    syncingFromRoute = true
+    activeIndex.value = index
+    nextTick(() => {
+        syncingFromRoute = false
+    })
+}
+
+function replaceToTerm(index) {
+    emit('navigate', { termIndex: index, replace: true })
+    nextNavigationReplace = false
+}
+
 /** Remove a terminal tab (idempotent — no-op if already removed). */
 function removeTerminalTab(index) {
     if (index === 0) return // main terminal tab is permanent
@@ -176,6 +217,7 @@ function removeTerminalTab(index) {
     terminals.value.splice(idx, 1)
     if (activeIndex.value === index) {
         const prevTerminal = terminals.value[Math.max(0, idx - 1)]
+        nextNavigationReplace = false
         activeIndex.value = prevTerminal?.index ?? 0
     }
     // Eagerly remove from store so that syncTerminalsFromBackend doesn't
@@ -340,8 +382,71 @@ function handleSnippetSendTo(snippet, target) {
     }
 }
 
+watch(activeIndex, (newIndex) => {
+    if (!props.active) return
+    if (syncingFromRoute) return
+    if (pendingRouteTermIndex.value != null) return
+    if (newIndex === props.routeTermIndex) return
+    emit('navigate', {
+        termIndex: newIndex,
+        replace: nextNavigationReplace,
+    })
+    nextNavigationReplace = false
+})
+
+function applyRouteTermIndex(target) {
+    if (!props.active) return
+
+    if (target === undefined) {
+        pendingRouteTermIndex.value = null
+        unavailableRouteTermIndex.value = undefined
+        if (props.routeTermIndex !== 0) {
+            syncActiveIndex(0)
+            replaceToTerm(0)
+        } else {
+            syncActiveIndex(0)
+        }
+        return
+    }
+
+    if (target === null) {
+        pendingRouteTermIndex.value = null
+        unavailableRouteTermIndex.value = INVALID_ROUTE_TERM_INDEX
+        syncActiveIndex(findFallbackTermIndex(0))
+        return
+    }
+
+    if (terminals.value.some(term => term.index === target)) {
+        pendingRouteTermIndex.value = null
+        unavailableRouteTermIndex.value = undefined
+        syncActiveIndex(target)
+        return
+    }
+
+    if (!backendIndicesReady) {
+        pendingRouteTermIndex.value = target
+        unavailableRouteTermIndex.value = undefined
+        syncActiveIndex(findFallbackTermIndex(target))
+        return
+    }
+
+    pendingRouteTermIndex.value = null
+    unavailableRouteTermIndex.value = target
+    syncActiveIndex(findFallbackTermIndex(target))
+}
+
+watch(
+    () => [props.active, props.routeTermIndex],
+    ([active, target]) => {
+        if (!active) return
+        applyRouteTermIndex(target)
+    },
+    { immediate: true },
+)
+
 // Focus the active terminal when switching terminal sub-tabs
 watch(activeIndex, () => {
+    if (isRouteTermUnavailable.value) return
     nextTick(() => {
         activeApi.value?.focus?.()
     })
@@ -353,6 +458,7 @@ watch(activeIndex, () => {
 // We retry with requestAnimationFrame (up to ~500ms) to cover both mouse and keyboard.
 watch(() => props.active, (active) => {
     if (!active) return
+    if (isRouteTermUnavailable.value) return
     let attempts = 0
     const maxAttempts = 30 // ~500ms at 60fps
     function tryFocus() {
@@ -439,17 +545,26 @@ function handleDisconnect() {
 
 let discoveryDone = false
 
-// When the panel first becomes active, request terminal list from backend
+function requestTerminalDiscovery() {
+    if (!props.active) return
+    if (discoveryDone) return
+    if (!dataStore.wsConnected) return
+    const sent = sendWsMessage({
+        type: 'list_terminals',
+        terminal_context: props.contextKey,
+    })
+    if (sent) {
+        discoveryDone = true
+    }
+}
+
+// When the panel first becomes active and the WebSocket is ready, request the
+// terminal list from the backend. On direct page loads, the panel can mount
+// before the socket is open, so we retry when wsConnected flips to true.
 watch(
-    () => props.active,
-    (active) => {
-        if (active && !discoveryDone) {
-            discoveryDone = true
-            sendWsMessage({
-                type: 'list_terminals',
-                terminal_context: props.contextKey,
-            })
-        }
+    [() => props.active, () => dataStore.wsConnected],
+    () => {
+        requestTerminalDiscovery()
     },
     { immediate: true },
 )
@@ -459,8 +574,13 @@ watch(
     () => terminalTabsStore.indices[props.contextKey],
     (backendIndices, oldIndices) => {
         if (!backendIndices) return
+        backendIndicesReady = true
         syncTerminalsFromBackend(backendIndices, oldIndices)
+        if (pendingRouteTermIndex.value != null) {
+            applyRouteTermIndex(pendingRouteTermIndex.value)
+        }
     },
+    { immediate: true },
 )
 
 function syncTerminalsFromBackend(backendIndices, oldIndices) {
@@ -487,6 +607,7 @@ function syncTerminalsFromBackend(backendIndices, oldIndices) {
                 terminals.value.splice(idx, 1)
                 if (activeIndex.value === index) {
                     const prevTerminal = terminals.value[Math.max(0, idx - 1)]
+                    nextNavigationReplace = false
                     activeIndex.value = prevTerminal?.index ?? 0
                 }
             }
@@ -576,6 +697,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
     window.removeEventListener('twicc:terminal-tab-shortcut', handleTerminalTabShortcut)
 })
+
+defineExpose({ activeIndex })
 </script>
 
 <template>
@@ -588,6 +711,15 @@ onBeforeUnmount(() => {
                 class="terminal-tab-nav"
                 @wa-tab-show="onTerminalTabShow"
             >
+                <wa-tab
+                    v-if="isRouteTermUnavailable"
+                    slot="nav"
+                    panel="__unavailable__"
+                    class="terminal-unavailable-tab"
+                    aria-hidden="true"
+                    tabindex="-1"
+                ></wa-tab>
+
                 <wa-tab
                     v-for="term in terminals"
                     :key="term.index"
@@ -611,7 +743,7 @@ onBeforeUnmount(() => {
             </wa-tab-group>
 
             <!-- Right: rename button (always visible) + terminal-specific actions (when connected) -->
-            <div class="terminal-actions">
+            <div v-if="!isRouteTermUnavailable" class="terminal-actions">
                 <template v-if="tb.isConnected">
                     <!-- Scroll to edge buttons -->
                     <wa-button
@@ -738,10 +870,16 @@ onBeforeUnmount(() => {
             </div>
         </div>
 
+        <div v-if="isRouteTermUnavailable" class="terminal-unavailable-state">
+            <wa-callout variant="warning" appearance="filled-outlined" class="terminal-unavailable-callout">
+                {{ unavailableRouteMessage }}
+            </wa-callout>
+        </div>
+
         <!-- Terminal panels: all overlay each other, only the active one is visible.
              Uses visibility:hidden (not display:none) so hidden terminals keep their
              dimensions — prevents xterm.js resize flash on tab switch. -->
-        <div class="terminal-panels-container">
+        <div v-if="!isRouteTermUnavailable" class="terminal-panels-container">
             <div
                 v-for="term in terminals"
                 :key="term.index"
@@ -760,6 +898,7 @@ onBeforeUnmount(() => {
         </div>
 
         <TerminalExtraKeysBar
+            v-if="!isRouteTermUnavailable"
             :active-modifiers="activeApi?.activeModifiers ?? { ctrl: false, alt: false, shift: false }"
             :locked-modifiers="activeApi?.lockedModifiers ?? { ctrl: false, alt: false, shift: false }"
             :is-touch-device="settingsStore.isTouchDevice"
@@ -818,6 +957,20 @@ onBeforeUnmount(() => {
     flex-direction: column;
 }
 
+.terminal-unavailable-state {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--wa-space-m);
+}
+
+.terminal-unavailable-callout {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: min(32rem, 100%);
+}
+
 /* ── Merged toolbar ─────────────────────────────────────── */
 
 .terminal-actions-bar {
@@ -861,6 +1014,9 @@ onBeforeUnmount(() => {
 .terminal-tab-nav wa-tab[active] {
     margin-block-end: 0;
     color: var(--wa-color-brand);
+}
+.terminal-unavailable-tab {
+    display: none;
 }
 .add-terminal-button {
     align-self: center;
