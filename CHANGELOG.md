@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - ![Right click on git tab](frontend/public/whats-new/v1.5/git-right-click.webp)
 - Added support for selecting older Claude model versions (Opus 4.5, Sonnet 4.5) with automatic upgrade on retirement
   - ![Claude model picker](frontend/public/whats-new/v1.5/claude-models-versions.webp)
+- Granular URL routing: terminal index, file selection, and git commit are now encoded in the URL — browser Back/Forward, reload, bookmarks, and other links restore the expected screen
+- Session list items are now proper links — middle-click or right-click to open a session in a new browser tab
 - Pan/zoom on all image displays
 - "Compacting" status indicator during live sessions (and better rendering of compaction summaries)
   - ![Compact summary](frontend/public/whats-new/v1.5/compact-rendering.webp)
