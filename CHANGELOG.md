@@ -4,11 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Some entries include illustrative screenshots in nested sub-lists.
 
-## [Unreleased]
+## [1.5.0] - 2026-04-20
 
 ### Added
 
-- Added support for Opus 4.7, and selecting older Claude model versions (Available: Opus 4.7, Opus 4.6, Opus 4.5, Sonnet.4.6, Sonnet 4.5).
+- Added support for Opus 4.7, and allow selecting older Claude model versions (Available: Opus 4.7, Opus 4.6, Opus 4.5, Sonnet.4.6, Sonnet 4.5).
   - ![Claude model picker](frontend/public/whats-new/v1.5/claude-models-versions.webp)
 - Added "xHigh" new effort for Opus 4.7, and "Max" effort for Opus 4.7, Opus 4.6, and Sonnet 4.6 
 - Project, workspace, and all-projects home views now have their own Files, Git (projects only), and Terminal tabs
@@ -46,7 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Text selection can now be added to the message input without requiring a comment
 - Improved usage tooltip rendering: better recent burn rate computation and display, more visible buttons in dark mode
 - Better initial page load with consolidated config loading and eliminated background flash
-- Improved text selection comment UX: better overflow handling, keyboard shortcut so add to message, button positioning based on selection direction, and panel now draggable via the panel background
+- Improved text selection comment UX: better overflow handling, keyboard shortcut to add to message, button positioning based on selection direction, and panel now draggable via the panel background
 - Snippet buttons show a scope (workspace ou project) indicator
 - Re-clicking the active project/workspace in the sidebar deselects the current session and navigates to the home view (to access the new tabs)
 - On small-height screens, tabs can be switched directly from the compact header via a dropdown without expanding it first
